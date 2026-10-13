@@ -1,0 +1,434 @@
+     1→     1→# SaloonX — Salon Billing PWA — Project Worklog
+     2→     2→
+     3→     3→## Product Overview
+     4→     4→**SaloonX** is an ultra-simple salon billing PWA for Indian salons. Staff with zero computer experience must be able to bill in seconds. Admin gets full reports & management.
+     5→     5→
+     6→     6→## Core User Flows
+     7→     7→1. **Login**: POS-style — user taps their name tile → enters 4-digit PIN on a big numeric keypad. No typing usernames.
+     8→     8→2. **Billing (staff+admin)**: 3-step flow with big buttons:
+     9→     9→   - Step 1 Services: category chips + big service cards (name, ₹price, duration). Tap to add to cart. Floating cart bar with total.
+    10→    10→   - Step 2 Customer: big numeric keypad to enter 10-digit mobile (or "Skip — Walk-in"). On 10 digits, auto-lookup: returning customer → festive recommendation banner "Returning customer (N visits) — Apply X% off?" with Apply / Skip. Optional name for new customers.
+    11→    11→   - Step 3 Payment: bill summary + 3 big buttons: Cash (with quick-tendered chips & change calculator), UPI (shows QR — admin-uploaded image OR auto-generated from UPI ID with amount; plus "Payment Received ✓" button), Card (confirm on machine).
+    12→    12→   - Step 4 Success: animated check, receipt card, buttons: Share on WhatsApp (wa.me text receipt), More share (navigator.share), Download PDF, Print, New Bill.
+    13→    13→3. **Admin only**: Dashboard (today revenue/bills/avg, payment split, 7-day chart, top services), Transactions (filters, detail, CSV export, PDF export), Services CRUD, Staff CRUD, Customers list, Settings (salon profile, UPI ID + QR upload, GST toggle+%, loyalty rule: visits threshold + discount %, receipt footer).
+    14→    14→4. **Staff sees ONLY billing + logout** (no reports/transactions/settings).
+    15→    15→
+    16→    16→## Tech Decisions (sandbox-adapted)
+    17→    17→- Next.js 16 App Router, TypeScript, Tailwind 4 + shadcn/ui (New York), framer-motion, lucide-react.
+    18→    18→- **Single user-visible route: `/` only!** Entire app = client-side view switching (Zustand store `view` state). All other functionality via `/api/*` routes.
+    19→    19→- **Data**: Prisma + SQLite (this sandbox has no Firebase). Data access isolated in API routes so migration to Firebase (App Hosting + Firestore + Storage) later is contained. Custom session auth (PIN-based, node:crypto scrypt hashing, DB-backed session tokens in httpOnly cookies) — swap-able for Firebase Auth.
+    20→    20→- PWA: manifest.webmanifest + service worker + icons (already in `public/icons/`).
+    21→    21→- Currency: ₹ INR (Intl.NumberFormat en-IN). Bill numbers: `SX-0001`.
+    22→    22→- No blue/indigo. Theme: warm rose/deep rosewood primary, cream background, amber accents. Dark mode via next-themes.
+    23→    23→- Packages to add: `jspdf`, `jspdf-autotable`, `qrcode` (+`@types/qrcode`).
+    24→    24→
+    25→    25→## File Ownership (parallel-safety contract)
+    26→    26→- Task 2 (foundation) owns: `prisma/`, `src/lib/*`, `src/app/api/**`, `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/globals.css`, `src/store/*`, `src/components/auth/*`, `src/components/shell/*`, `public/*`.
+    27→    27→- Task 3-a (billing) owns ONLY: `src/components/billing/**` (replace stubs, same default export names).
+    28→    28→- Task 3-b (admin) owns ONLY: `src/components/admin/**` (replace stubs, same default export names).
+    29→    29→- Shared contracts (types, API shapes, store) are defined by Task 2 and documented below — Tasks 3-a/3-b MUST NOT change `src/lib/*`, `src/store/*`, `src/app/**` (they only consume them). If a change is truly needed, note it in worklog instead of editing.
+    30→    30→
+    31→    31→---
+    32→    32→Task ID: 1
+    33→    33→Agent: main (Z.ai Code)
+    34→    34→Task: Research salon billing software landscape, define product spec, generate brand assets, set up plan
+    35→    35→
+    36→    36→Work Log:
+    37→    37→- Ran 6 web searches on salon billing software (Invoay, MioSalon, GINEX POS, Apna Billbook, Vyapar, Vagaro)
+    38→    38→- Key findings: single-screen billing flow, UPI QR + WhatsApp receipt are India table-stakes, loyalty recognition for returning customers, admin/staff role split, reports with CSV/PDF export
+    39→    39→- Defined product spec above (3-step billing, PIN login, role gating)
+    40→    40→- Generated SaloonX logo via image-generation (deep rose + cream, scissors monogram)
+    41→    41→- Created PWA icons: public/icons/{icon-192,icon-512,icon-maskable-512,apple-touch-icon,icon-1024}.png
+    42→    42→
+    43→    43→Stage Summary:
+    44→    44→- Research done; spec locked; brand assets in public/icons/
+    45→    45→- Tech: sandbox uses Prisma/SQLite + custom PIN auth instead of Firebase (migration path documented above)
+    46→    46→- Ready for Task 2 (foundation)
+    47→    47→
+    48→    48→---
+    49→    49→Task ID: 2
+    50→    50→Agent: foundation (Z.ai Code)
+    51→    51→Task: Foundation — Prisma schema, seed, auth, full API surface, shared libs, theme, PWA, app shell, login, view stubs
+    52→    52→
+    53→    53→Work Log:
+    54→    54→- Prisma schema replaced (User/Session/Category/Service/Customer/Transaction/TransactionItem/Settings), pushed with db:push, client generated
+    55→    55→- Idempotent seed (`bun run db:seed`): 3 users, settings singleton, 6 categories / 26 services, 6 customers, 45 transactions over last 14 days (7 today), deterministic PRNG
+    56→    56→- Custom PIN auth: scrypt hashPin/verifyPin (timingSafeEqual), DB-backed Session, httpOnly cookie `saloonx_session` (30d, lax, path /), requireApiUser() guard with role support
+    57→    57→- 16 API route files under src/app/api/** (all force-dynamic, zod-validated, JSON error shape {error}) — old demo src/app/api/route.ts deleted
+    58→    58→- Shared libs: types.ts (DTO contracts), api-client.ts (apiGet/apiPost/apiPut/apiDelete), format.ts (INR/en-IN dates), serialize.ts (server DTO mappers + dayStart/dayEnd/dateKey/round2)
+    59→    59→- Zustand store src/store/use-app-store.ts exactly per contract (user/hydrated/view/cart/lastBill + actions)
+    60→    60→- Theme: globals.css rewritten — warm rose/rosewood primary + cream bg + amber accents, oklch palette, radius 1rem, print CSS (.print-receipt), custom thin scrollbars, subtle rose radial bg, body font-size 15px
+    61→    61→- PWA: layout.tsx metadata + viewport (themeColor light #5E1A2C / dark #1D1418), Providers (TanStack staleTime 30s + next-themes class + sonner Toaster top-center), PwaRegister, manifest.webmanifest, sw.js (cache v2)
+    62→    62→- App shell: sticky header (logo, settings salon name, theme toggle, user chip w/ role badge + dropdown logout), desktop 240px sidebar w/ framer-motion layoutId active pill, ADMIN mobile bottom nav (Bill/Home/Bills/More w/ vaul drawer), STAFF = billing only, AnimatePresence view transitions, 7 views lazy-loaded via next/dynamic
+    63→    63→- POS login view: user tiles (step 1) → 4-digit PIN keypad (step 2) with auto-submit, shake-on-wrong-PIN, sonner feedback, demo PIN footer
+    64→    64→- 7 view stubs created (billing/billing-flow.tsx + 6 admin/*-view.tsx) with exact default export names for Tasks 3-a/3-b to replace
+    65→    65→- Verified: lint clean, seed idempotent, all endpoints curl-tested incl. 401/403/409 guard rails, browser E2E (login, PIN pad, wrong PIN, logout, nav, dark mode, mobile admin + staff layouts, SW activation + precache), dev.log clean
+    66→    66→
+    67→    67→Stage Summary:
+    68→    68→- Foundation complete; Tasks 3-a (billing) and 3-b (admin) can build entirely against the contracts below
+    69→    69→
+    70→    70→## Seed credentials (demo data in db/custom.db)
+    71→    71→- Ravi (Owner) — ADMIN — PIN 1234
+    72→    72→- Priya — STAFF — PIN 1111
+    73→    73→- Amit — STAFF — PIN 2222
+    74→    74→- Test bills SX-0046 (Rahul UPI 150), SX-0047 (walk-in CASH 300), SX-0048 (Priya CASH 200) were created during API verification and left in as demo data
+    75→    75→- Customers after seed: Rahul Sharma 8 visits, Sneha Patel 2, Vikram Singh 5, Anjali Verma 2, Mohammed Ali 11, Kavita Joshi 6 (loyalty threshold 3 → Rahul/Vikram/Ali/Kavita eligible for 10% off, Sneha/Anjali not)
+    76→    76→
+    77→    77→## API surface (all JSON; errors are `{ "error": "message" }`; auth via httpOnly cookie)
+    78→    78→Auth:
+    79→    79→- GET /api/auth/users → `{ users: [{ id, name, role }] }` (active only, ADMIN sorted first) — no auth
+    80→    80→- POST /api/auth/login `{ userId, pin }` → `{ user: { id, name, role } }` + sets cookie; 401 "Wrong PIN"; pin must be 4 digits
+    81→    81→- POST /api/auth/logout → `{ ok: true }` + clears cookie
+    82→    82→- GET /api/auth/me → `{ user: { id, name, role } }` or 401
+    83→    83→Catalog (any authed):
+    84→    84→- GET /api/catalog → `{ categories: CategoryDTO[] }` — sorted by sortOrder then name; services sorted by name; INCLUDES inactive services (billing must filter `active === true`; admin services view uses the flag)
+    85→    85→- POST /api/catalog/category (ADMIN) `{ name, sortOrder? }` → `{ category: CategoryDTO }`
+    86→    86→- PUT /api/catalog/category (ADMIN) `{ id, name?, sortOrder? }` → `{ category }`; DELETE ?id= → 409 if it has services
+    87→    87→- POST /api/catalog/service (ADMIN) `{ name, price, durationMin?, categoryId }` → `{ service: ServiceDTO }`
+    88→    88→- PUT /api/catalog/service (ADMIN) `{ id, name?, price?, durationMin?, categoryId?, active? }` → `{ service }` (deactivate via active:false)
+    89→    89→- DELETE /api/catalog/service?id= (ADMIN) → 409 "Service is used in past bills — deactivate it instead"
+    90→    90→Customers:
+    91→    91→- GET /api/customers/lookup?mobile=10digits (any authed) → `{ customer: CustomerDTO | null, recommendation: { eligible, discountPct, visits } | null }` — recommendation is null when customer not found
+    92→    92→- GET /api/customers?search=&page=1&limit=50 (ADMIN) → `{ customers: CustomerDTO[], total }` — search matches mobile OR name, sorted lastVisitAt desc; CustomerDTO.lastVisitAt is ISO string | null
+    93→    93→Transactions:
+    94→    94→- POST /api/transactions (any authed) `{ items: [{ serviceId, qty }], customerMobile?, customerName?, discountPct?, paymentMethod, note? }` → `{ transaction: TransactionDTO, settings: SettingsDTO }` — prices computed server-side from CURRENT service prices; billNo SX-####; customer upserted (visits+1, totalSpend+total, lastVisitAt, name backfilled if null); all atomic in db.$transaction
+    95→    95→- GET /api/transactions?from=YYYY-MM-DD&to=YYYY-MM-DD&method=&staffId=&search=&page=1&limit=25 (ADMIN) → `{ data: TransactionDTO[] (with items), total, summary: { revenue, count, avgBill, byMethod: { CASH|UPI|CARD: { amount, count } } } }` — `to` inclusive, newest first, search matches billNo/customerMobile/customerName, default range last 30 days; summary covers the ENTIRE filter (not just page)
+    96→    96→- GET /api/transactions/[id] (ADMIN) → `{ transaction: TransactionDTO }`
+    97→    97→Stats:
+    98→    98→- GET /api/stats?from=&to= (ADMIN) → StatsResponse — default last 7 days incl. today; `daily` zero-fills dates (YYYY-MM-DD local, capped to most recent 90 days of range); `topServices` = top 6 by revenue (count = qty sold, revenue = price×qty); `newCustomers` = first-ever bills in range; `returningBills` = customer bills that are not their first-ever
+    99→    99→Staff (ADMIN):
+   100→   100→- GET /api/staff → `{ users: StaffDTO[] }` — StaffDTO = { id, name, role, active, billsToday, revenueToday }; never pinHash; ADMIN listed first
+   101→   101→- POST /api/staff `{ name, pin (exactly 4 digits), role }` → `{ user: StaffDTO }`
+   102→   102→- PUT /api/staff `{ id, name?, pin?, role?, active? }` → `{ user }` — 409 "Cannot demote or deactivate the last active admin"; deactivation deletes sessions
+   103→   103→- DELETE /api/staff?id= → 409 "Deactivate instead — this staff has past bills" if referenced; sessions cascade
+   104→   104→Settings:
+   105→   105→- GET /api/settings (any authed) → SettingsDTO (creates singleton default if missing)
+   106→   106→- PUT /api/settings (ADMIN) → SettingsDTO — upiQrImage must start with "data:image/" if present; gstPct/loyaltyDiscountPct 0–100
+   107→   107→Export:
+   108→   108→- GET /api/export/csv?from=&to=&method= (ADMIN) → text/csv; charset=utf-8 attachment saloonx-transactions.csv with BOM; columns: Bill No, Date, Time, Customer Mobile, Customer Name, Staff, Services ("Name x2; Name2 x1"), Subtotal, Discount %, Discount Amt, GST Amt, Total, Payment Method; default range last 30 days
+   109→   109→
+   110→   110→## File map (Task 2 owned files)
+   111→   111→- prisma/schema.prisma, prisma/seed.ts (script `bun run db:seed`)
+   112→   112→- src/lib/: auth.ts (hashPin/verifyPin/createSession/getSessionUser/requireApiUser), types.ts (ALL DTOs), api-client.ts, format.ts (formatINR/formatDate/formatDateTime/formatTime/toDateKey), serialize.ts (server DTO mappers), db.ts (log reduced to errors only)
+   113→   113→- src/store/use-app-store.ts (EXACT per contract — View, CartItem, cart actions, setUser resets view to 'billing')
+   114→   114→- src/app/layout.tsx, page.tsx (hydration → splash → LoginView | AppShell), globals.css
+   115→   115→- src/app/api/** (16 route files)
+   116→   116→- src/components/auth/login-view.tsx; src/components/shell/{app-shell,providers,pwa-register}.tsx
+   117→   117→- public/manifest.webmanifest, public/sw.js
+   118→   118→- STUBS for Tasks 3-a/3-b (replace contents, keep default export names): src/components/billing/billing-flow.tsx, src/components/admin/{dashboard,transactions,services,staff,customers,settings}-view.tsx
+   119→   119→
+   120→   120→## What Tasks 3-a / 3-b must know
+   121→   121→- Client data access: apiGet/apiPost/apiPut/apiDelete from '@/lib/api-client' — they THROW Error(message) on {error} responses; catch and toast.error(e.message). All DTO types in '@/lib/types'
+   122→   122→- TanStack Query is preconfigured (staleTime 30s, retry 1). Existing query keys: ['settings'], ['auth-users'] — reuse ['settings'] for settings data; invent your own for catalog/transactions/stats/customers/staff
+   123→   123→- Store: useAppStore — cart via addToCart/setCartQty/clearCart (CartItem { serviceId, name, price, qty }); setLastBill for the success view; setView to navigate; user.role gates UI ('ADMIN' | 'STAFF')
+   124→   124→- Print CSS is ready: wrap the receipt in class `print-receipt` and call window.print()
+   125→   125→- UPI step: settings.upiQrImage may be a base64 data URL (admin-uploaded) OR null — fall back to generating a QR from settings.upiId + amount with the installed `qrcode` lib
+   126→   126→- WhatsApp share: wa.me text receipt; PDF via jspdf + jspdf-autotable (installed, client-side OK)
+   127→   127→- Date keys for filters: use toDateKey(new Date()) from '@/lib/format' (local YYYY-MM-DD); API handles day boundaries
+   128→   128→- Icons in nav: Billing=Scissors, Dashboard=LayoutDashboard, Transactions=ReceiptText, Services=Sparkles, Staff=UsersRound, Customers=Contact, Settings=Settings2
+   129→   129→- View transitions + lazy loading are handled by AppShell — views just render content (own their padding: start with p-4 lg:p-6)
+   130→   130→- Billing view receives no props; read user/cart from store. STAFF never sees admin views (shell + API both enforce)
+   131→   131→- Charts: recharts installed; theme chart colors --chart-1..5 (rose/amber/emerald/teal/orange)
+   132→   132→
+   133→   133→## Deviations from Task 2 spec (all intentional, documented)
+   134→   134→1. Prisma schema: added `service Service? @relation(...)` on TransactionItem — the spec schema as written fails prisma validate (Service.items needs an opposite relation field)
+   135→   135→2. Seed visit counts: spec's exact numbers (6/2/4/1/8/3 = 24) conflicted with "45 transactions, ~25% walk-in, aggregates consistent"; tuned to 8/2/5/2/11/6 (34 customer bills + 11 walk-ins = 45, 24% walk-in); loyalty demo still works (4 eligible / 2 not). Seed is deterministic (fixed PRNG)
+   136→   136→3. sw.js: .css/.js are NOT cache-first (spec suggested it) — dev assets are unhashed and cache-first served stale code after edits; cache-first is limited to /icons/, .png, .woff2; everything else network-first with cache fallback. CACHE_VERSION v2
+   137→   137→4. stats: `daily` capped to most recent 90 days of the requested range (aggregates still cover the FULL range) — prevents absurd array sizes on wide queries while `?from=2020&to=2030` still returns all data
+   138→   138→5. staff DELETE: also guards deleting the last active ADMIN (spec only required the transactions 409)
+   139→   139→6. Added src/lib/serialize.ts (server-side DTO mappers + date helpers) — needed to keep route files DRY; within Task 2 ownership
+   140→   140→7. db.ts: prisma log ['query'] → ['error'] (query logging flooded dev.log)
+   141→   141→8. ThemeToggle: CSS-based icon swap (dark: variants) instead of JS mounted-state (react-hooks v6 bans setState-in-effect); header salon name uses <div> not <p> (Skeleton is a div — invalid nesting + hydration warning)
+   142→   142→9. transactions GET and export CSV default to last 30 days when from/to omitted; stats defaults to last 7 days
+   143→   143→10. Test transactions SX-0046/47/48 kept in demo data (per spec note)
+   144→   144→
+   145→   145→---
+   146→   146→Task ID: 3-b
+   147→   147→Agent: admin-ui (Z.ai Code)
+   148→   148→Task: Admin UI — replace the 6 admin view stubs + shared helpers (range picker, report PDF, UI atoms)
+   149→   149→
+   150→   150→Work Log:
+   151→   151→- Replaced all 6 stubs keeping exact default export names; only touched `src/components/admin/**`
+   152→   152→- Created shared helpers in the same folder:
+   153→   153→  - `ui-atoms.tsx` — initials(), parseDateKey(), useDebouncedValue (400ms), formatAxisINR (k/L axis labels), METHOD_META + MethodBadge (Cash=emerald / UPI=rose / Card=amber), RoleBadge (matches shell), EmptyState, response wrappers CatalogResponse/StaffListResponse/CustomersResponse
+   154→   154→  - `range-picker.tsx` — preset chips Today/Yesterday/7d/30d/This Month + Custom popover (two date inputs + Apply, auto-swaps reversed dates). Exports `DateRange`, `computePreset()`, `detectPreset()`. `to` is inclusive (This Month = 1st→today, 7 Days = today−6→today)
+   155→   155→  - `report-pdf.ts` — `downloadReportPdf(rows, summary, settings, from, to)`: A4 portrait, salon header + generated timestamp, Revenue/Bills/Avg stat line (from `summary` = whole filter), autoTable (Bill No/Date/Time/Customer/Staff/Method/Discount/Total), footer totals summed from the exported rows, page footers, honest note when rows.length < summary.count, filename `SaloonX-report-{from}-to-{to}.pdf`. All money as "Rs." (no ₹ — jsPDF font limitation)
+   156→   156→- DashboardView: KPI grid (Revenue/Bills/Avg/New Customers) with framer-motion count-up (useMotionValue + useTransform rendered as motion.span text — no setState), payment split card with animated share bars (emerald/rose/amber), recharts AreaChart (rose var(--chart-1) + gradient fill) switching to BarChart when range > 31 days, Top Services (rank chips 1–6, animated progress bars cycling chart-1..5) + Staff Performance (avatar initials) side by side, Recent Bills (last 5, same range) with "View all →" → setView('transactions'). Default range 7 Days. Custom rounded tooltip, skeletons, error+retry state
+   157→   157→- TransactionsView: sticky (top-16) filter card — RangePicker + method ToggleGroup (All/Cash/UPI/Card) + staff Select (options from ['staff']) + debounced search + Reset; summary strip (Revenue/Bills/Avg + byMethod mini-split); desktop Table + mobile stacked cards; useInfiniteQuery manual pagination with Load more + "Showing X of Y bills"; receipt-style read-only detail Dialog (salon header from ['settings'], items, subtotal/discount/GST/total, method + status badges, receipt footer). CSV via window.open(/api/export/csv?from&to&method) + toast; PDF button disabled-with-tooltip when empty. Default range 30 Days
+   158→   158→- ServicesView: category sections (Collapsible, default open) with edit/delete, service rows (name + amber "Inactive" badge, duration, price, active Switch, edit/delete), Add/Edit Service dialog (name/price ₹/duration/category/active — active Switch only on edit since POST has no active field), Add/Edit Category dialog (name + sortOrder), delete AlertDialogs; 409 "deactivate instead" surfaces as toast.error with a "Deactivate" action button that flips the Switch
+   159→   159→- StaffView: role explainer note card (amber), staff grid 1/2/3 (rose-gradient avatar initials, "(you)" badge when id === store user, RoleBadge, bills/revenue today, active Switch, Edit/Delete); Add dialog (name, masked 4-digit PIN with digit-only filter, role Select), Edit dialog (optional new PIN "leave blank to keep current"), delete AlertDialog; mutations invalidate ['staff'] + ['auth-users'] (login tiles)
+   160→   160→- CustomersView: debounced search, infinite list (50/page, Load more), loyalty rose BadgePercent badge when settings.loyaltyEnabled && visits >= loyaltyVisits (desktop: "Loyalty: N visits", mobile: compact "N"), desktop Table + mobile cards (avatar, name/Unknown, mono mobile, visits, total spend, last visit or Never), empty state with contextual hint
+   161→   161→- SettingsView: sticky top-16 header with Save button + amber dirty dot; 5 cards in max-w-3xl — Salon Profile (Store), Payments-UPI (QrCode: upiId + QR upload with canvas downscale to ≤600px JPEG 0.85 data URL, white preview tile, Remove), Taxes (Percent: gstEnabled Switch + gstPct with % suffix, disabled when off), Loyalty (BadgePercent: switch + visits + discount %, live "Apply X% off" helper text), Receipt (ReceiptText footer textarea). Form uses derived state (formState ?? fromSettings(data)) so no setState-in-effect; dirty = JSON diff vs server; save PUTs full object (id omitted), validates gst 0–100 / visits ≥ 1 / discount 0–100 with inline field errors, on success setFormState(fromSettings(saved)) + invalidate ['settings'] (keeps AppShell salon name fresh)
+   162→   162→- Verified: `bun run lint` clean; `bunx tsc --noEmit` → zero errors in src/components/admin/**; all 9 admin modules runtime-import OK in bun; downloadReportPdf executed against real DTOs → valid PDF (deleted after test); API shapes re-verified live (stats/staff/customers/transactions/export csv); dev.log clean throughout
+   163→   163→
+   164→   164→Stage Summary:
+   165→   165→- All 6 admin views production-ready; parent QA can login as Ravi (PIN 1234) and walk Dashboard → Transactions (filters/exports/detail) → Services/Staff/Customers CRUD → Settings save
+   166→   166→
+   167→   167→Query keys INVENTED here (do not collide):
+   168→   168→- `['stats', from, to]` (dashboard)
+   169→   169→- `['recent-bills', from, to]` (dashboard last-5 list — separate from the ledger key on purpose)
+   170→   170→- `['transactions-list', from, to, method, staffId, search]` (infinite ledger; page only in pageParam)
+   171→   171→- `['catalog']` (services view)
+   172→   172→- `['staff']` (staff view + transactions staff filter)
+   173→   173→- `['customers-list', search]` (infinite)
+   174→   174→- Reused as-is: `['settings']` (shell + settings view + transactions detail + customers loyalty), `['auth-users']` (invalidated by staff mutations)
+   175→   175→
+   176→   176→Notes for other tasks / QA:
+   177→   177→- View padding: each view renders `p-4 pb-24 lg:p-6 lg:pb-6` per task spec — note AppShell's `<main>` already carries `pb-24 lg:pb-6`, so mobile bottom spacing is doubled (roomy, harmless); flagged in case the orchestrator wants to drop one
+   178→   178→- CSV export honors from/to/method only (server contract — no staffId/search params exist); PDF export covers the LOADED rows and prints a "showing X of Y" note if not everything is loaded
+   179→   179→- Transaction status from API is "COMPLETED" (not "PAID") — detail dialog renders it verbatim in an emerald badge
+   180→   180→- 409 UX: service-delete toast includes a one-tap "Deactivate" action; staff/category 409s show the friendly API message as-is
+   181→   181→- RangePicker chip row scrolls horizontally on narrow screens (min-w-0 + overflow-x-auto), Custom chip is a Popover with two native date inputs
+   182→   182→- PDF totals row sums exported rows while the header stat line uses the filter summary (both labeled); "Rs." everywhere in PDFs per jsPDF ₹ limitation
+   183→   183→- Observed (NOT fixed — Task 2 ownership): `bunx tsc --noEmit` reports pre-existing type errors in `src/app/api/stats/route.ts` and `src/app/api/transactions/route.ts` (Date|null narrowing, items relation typing). Dev server + endpoints work fine (SWC transpile-only), but a future typecheck gate would fail there
+   184→   184→
+   185→   185→---
+   186→   186→Task ID: 3-a
+   187→   187→Agent: billing-flow (full-stack-developer)
+   188→   188→Task: Billing Flow UI — replaced the billing-flow.tsx stub with the full 4-step billing flow (services → customer → payment → success)
+   189→   189→
+   190→   190→Work Log:
+   191→   191→- Read Task 2 contracts (types, store, api-client, format, globals.css print CSS, AppShell sticky header h-16/main pb-24) and the vaul Drawer / Dialog / Popover component APIs
+   192→   192→- Created src/components/billing/use-keypad.ts — shared keypad hook (digits state, press with maxLength + onFull fired on the press event so auto-lookup at 10 digits is event-driven, no setState-in-effect) + formatMobileDisplay ("98765 43210")
+   193→   193→- Created src/components/billing/receipt-pdf.ts — buildReceiptText (WhatsApp *bold* receipt with ₹, conditional discount/GST lines) + downloadReceiptPdf (jsPDF A5 portrait: centered 16pt salon header, 9pt address/phone, dashed separators, item rows, right-aligned totals, footer, "Rs." not "₹", page-overflow guard, saves SaloonX-{billNo}.pdf)
+   194→   194→- Created steps/service-select-step.tsx — sticky category chips (All + active-only categories, active = bg-primary), 2/3/4-col grid of cards (name line-clamp-2, price text-lg bold text-primary, Clock duration), whileTap .96, qty>0 → ring-2 ring-primary + primary overlay stepper ([-] at 1 removes), sticky bottom cart bar (spring slide-in, "N items · ₹X") → vaul Drawer with steppers/remove/subtotal/Continue, loading skeletons, error retry, "No services yet — ask admin" empty card
+   195→   195→- Created steps/customer-step.tsx — cart chip, big display box (text-3xl tabular, AnimatePresence swap), 3×4 keypad (h-16 sm:h-20, ⌫/0/✓), lookup result cards: new customer (UserPlus + optional name Input), returning customer (avatar initials, visits/spend/last visit), loyalty rose-gradient banner (BadgePercent, Apply {pct}% Off / Skip BIG buttons), applied → emerald chip + Undo X, walk-in skip/undo, sticky Back + Continue (enabled on resolved or walk-in)
+   196→   196→- Created steps/payment-step.tsx — summary card (items, Subtotal, emerald Discount row with Pencil → Popover 0/5/10/15/20 chips, GST row only when gstEnabled, Total text-3xl text-primary), three BIG method cards (Banknote/QrCode/CreditCard, h-28 sm:h-32); Cash dialog (Exact/200/500/1000/2000/Custom chips, big change display "Return ₹X" emerald / "Insufficient — ₹X more" destructive, Confirm disabled until covered), UPI dialog (settings.upiQrImage img in white box → else QRCode.toDataURL(upi://pay?pa=…&am=total) generated in effect with setState only in async callbacks per react-hooks v6 rule, skeleton while generating, amber "not configured" fallback that still allows manual confirm), Card dialog (confirm on machine)
+   197→   197→- Created steps/success-step.tsx — motion success mark (stroke-draw circle + check path + spring scale + 8 confetti particles in theme colors, no new deps), "Bill Paid" + huge total + "Paid via UPI · SX-0052", print-receipt card (salon name, address/phone, billNo + formatDateTime, items, totals with dashed separators, method + icon, receiptFooter), 2-col action grid: WhatsApp (wa.me/91{mobile}, navigator.share/clipboard fallback for walk-ins), More Share (navigator.share → clipboard + "Receipt copied" toast), Download PDF, Print (window.print), full-width New Bill → resets flow + toast "Ready for next customer"
+   198→   198→- Rewrote billing-flow.tsx as orchestrator — step machine with AnimatePresence mode="wait" directional slide, step pills (completed = Check, clickable to go back, hidden on success), ['catalog']/['settings'] queries, keypad + lookup (in-flight ref guard, error toast-free inline state), loyalty decision wiring, POST /api/transactions with double-tap lock + fixed "Saving bill…" overlay, setLastBill + clearCart → step 4, derived empty-cart guard bounces step 2/3 → 1, walk-in continue zeroes discount
+   199→   199→- Fixed lint: removed sync setState in UPI QR effect (cache-entry-keyed-by-URI pattern with ref dedupe), removed unused imports/directives
+   200→   200→- Verified: bun run lint clean; bunx tsc --noEmit → zero errors in src/components/billing/** (pre-existing api route errors untouched); bun smoke test of buildReceiptText/downloadReceiptPdf/formatMobileDisplay → valid text + 5.3KB PDF; agent-browser E2E as staff Priya: PIN login → add 3 services → cart drawer → keypad 9876543210 → auto-lookup → Rahul loyalty banner → Apply 10% → payment (380 − 38 = 342) → Cash Exact → SX-0049 success → New Bill → walk-in → UPI dialog QR data-URL rendered → SX-0050 → discount Popover 20% override → pill back-nav → mobile (390px) + dark mode + no page errors; keypad buttons 111×64px, method cards 141×128px (≥44px targets)
+   201→   201→
+   202→   202→Stage Summary:
+   203→   203→- Files (all in src/components/billing/**): billing-flow.tsx (orchestrator + step pills + saving overlay), use-keypad.ts, receipt-pdf.ts, steps/{service-select-step, customer-step, payment-step, success-step}.tsx
+   204→   204→- Flow state lives in the orchestrator (step, keypad digits, lookup results, walkIn, name, discountPct, loyaltyDecision, bill); steps are mostly presentational; cart via useAppStore; amounts previewed client-side (round2) but the server response is authoritative on the receipt
+   205→   205→- Notes for parent/QA: two test bills SX-0049 (Rahul, CASH, 10% loyalty, ₹342) and SX-0050 (walk-in, UPI, ₹200) created during E2E and left in as demo data; loyalty Apply only pre-fills discountPct — staff can still override via the payment Popover; on step 2 walk-in continue resets any discount; success step uses the settings returned by POST /api/transactions (always fresh); WhatsApp button for walk-ins falls back to navigator.share/clipboard; mobile step pills show numbers only (labels hidden <sm) — accessible names come from the number/Check span
+   206→   206→- Known pre-existing (NOT fixed, Task 2 ownership): tsc errors in src/app/api/{stats,transactions}/route.ts; the dev.log "module not found ./steps/service-select-step" entry was a transient from mid-build (verified compiled clean after the file landed)
+   207→   207→
+   208→   208→---
+   209→   209→Task ID: 4
+   210→   210→Agent: main (Z.ai Code)
+   211→   211→Task: End-to-end QA with agent-browser — full admin + staff journey, bug fixes, visual review
+   212→   212→
+   213→   213→Work Log:
+   214→   214→- Verified login: POS user tiles → PIN keypad (wrong PIN shakes + clears, right PIN logs in), session persists across server restarts
+   215→   215→- Admin journey: Dashboard (KPIs, payment split, revenue chart, top services, staff perf, recent bills), Transactions (filters, search, summary, load more, detail dialog), CSV export endpoint (200, text/csv, BOM, correct columns), Services/Staff/Customers/Settings all render with live data
+   216→   216→- Staff journey (Priya): role gating confirmed — ONLY Billing visible; nav/API both enforce
+   217→   217→- Full billing E2E x3: services+cart drawer → returning customer 9876543210 (Rahul, 10 visits) → loyalty banner "recommend 10% off" → Apply → payment summary ₹420−10%=₹378 → CASH (tendered ₹500 → "Return ₹122") → SX-0051 success + receipt card; walk-in + UPI (QR generated from upiId, base64 PNG verified) → SX-0052; walk-in + CARD → SX-0053
+   218→   218→- WhatsApp share: opens wa.me/91{mobile} with full formatted receipt text (verified via tab inspection); PDF receipt downloads (SaloonX-SX-0051.pdf, valid); Print uses .print-receipt CSS
+   219→   219→- PWA: manifest.webmanifest served (standalone, theme #5E1A2C), sw.js 200, icons 200, SW registered
+   220→   220→- Responsive: 390px mobile — no horizontal overflow; dark mode intentional
+   221→   221→- VLM design review of 4 key screens: theme praised (rose/cream "warm, professional"); found real bugs (below)
+   222→   222→- BUGS FIXED: (1) initials("Ravi (Owner)") rendered "R(" — now filters non-alpha words (login-view.tsx + admin/ui-atoms.tsx); (2) formatINR dropped trailing zero (₹33,734.2) — now min/max fraction digits 2 for non-integers (lib/format.ts); (3) nested <button> hydration error (qty stepper inside card button) — card is now motion.div role=button with keyboard support (service-select-step.tsx); (4) added right-edge fade gradient on category chips row to signal scrollability
+   223→   223→- Restarted dev server after it died (EADDRINUSE stale entry in log is historical; server healthy on 3000)
+   224→   224→- Final: lint clean, zero page errors, all API 200s
+   225→   225→
+   226→   226→Stage Summary:
+   227→   227→- App is FULLY FUNCTIONAL end-to-end: login → billing (3 payment modes + loyalty + walk-in) → share/PDF/print → admin reports/exports → management/settings
+   228→   228→- Demo credentials: Ravi (Owner) ADMIN PIN 1234 · Priya STAFF PIN 1111 · Amit STAFF PIN 2222
+   229→   229→- Known minor (deferred): Radix Dialog "Missing Description" a11y warnings on some dialogs (cosmetic); single salon scope (no multi-branch); no offline bill queueing
+   230→   230→- Suggested next phases: bill void/cancel with admin audit trail, staff-wise commission reports, customer visit history detail, Firebase migration (swap lib/db + auth), Hindi/i18n
+   231→   231→
+   232→   232→---
+   233→   233→Task ID: 5 (cron review round 1)
+   234→   234→Agent: main (Z.ai Code)
+   235→   235→Task: Scheduled review — QA via agent-browser, fix deferred bugs, ship bill void/cancel + customer visit history + styling polish
+   236→   236→
+   237→   237→Current project status / assessment:
+   238→   238→- App was stable end-to-end (login, billing x3 payment modes, loyalty, WhatsApp/PDF share, admin dashboard/transactions/exports/management)
+   239→   239→- Two deferred debt items from previous rounds: tsc type errors in api/stats + api/transactions routes; doubled mobile bottom padding (AppShell main + views both carried pb-24)
+   240→   240→
+   241→   241→Current goals / completed modifications / verification results:
+   242→   242→1. QA: full admin journey re-verified (dashboard KPIs/chart, transactions filters/summary, zero page errors)
+   243→   243→2. BUG FIXES:
+   244→   244→   - Fixed ALL tsc errors in src/ (null-narrowing on dayStart/dayEnd fallbacks in stats route; Promise.all tuple-inference on items; `let customer = null` annotation) — `bunx tsc --noEmit` now reports ZERO errors in src/
+   245→   245→   - Removed doubled pb-24 from AppShell <main> (views own their padding)
+   246→   246→3. NEW FEATURE — Bill void/cancel with admin audit trail:
+   247→   247→   - Schema: Transaction gains voidedAt / voidedByUserId / voidReason (status now COMPLETED|VOIDED); db:push applied
+   248→   248→   - PUT /api/transactions/void (ADMIN): 404/409 guards, atomic $transaction, REVERSES customer aggregates (visits-1, totalSpend-total, lastVisitAt recomputed from remaining completed bills)
+   249→   249→   - Revenue integrity: stats, transactions summary, staff today-stats, customer-history totals all exclude VOIDED; ledger keeps voided rows for audit (opacity-60 + red Voided badge + line-through total)
+   250→   250→   - UI: detail dialog shows red void-info panel (when/who/reason + exclusion note), admin-only "Void this bill" → confirm dialog with optional reason → invalidates transactions/stats/recent-bills/staff/customers queries
+   251→   251→   - CSV export gains Status + Void Reason columns (audit trail intact); PDF export filters voided rows to match revenue summary
+   252→   252→   - Verified E2E: voided SX-0045 (₹2,100, reason "Wrong service selected by staff") → revenue 74,154.20→72,054.20, bills 53→52, cash split −2,100, Mohammed Ali visits 11→10, dashboard recent bills shows badge+strikethrough, CSV row says VOIDED
+   253→   253→4. NEW FEATURE — Customer visit history drill-down:
+   254→   254→   - GET /api/customers/[id] (ADMIN): profile + last 100 bills (voided included for audit) + totals from completed only
+   255→   255→   - Customers view rows/cards now clickable → history dialog with avatar header, Bills/Spend/AvgBill chips, per-visit cards (billNo, date, method+status badges, services, staff)
+   256→   256→   - Verified: Rahul Sharma → 11 bills, ₹15,162, full visit list
+   257→   257→5. STYLING POLISH (mandatory): StatusBadge component (Paid emerald / Voided red+Ban icon) used in ledger, detail dialog, recent bills, customer history; voided rows muted with strikethrough totals; history dialog skeleton loaders; keyboard-accessible clickable rows/cards
+   258→   258→
+   259→   259→Unresolved issues or risks, and priority recommendations for the next phase:
+   260→   260→- IMPORTANT ops note: Prisma schema changes require a dev-server restart to reload the generated client — first void attempt 500'd with "Unknown argument voidedAt" until restart (fixed by restart; documented for future rounds)
+   261→   261→- Staff bills-today aggregate reverses on void; if a bill is voided on a LATER day than it was created, staff today-stats won't show that reversal (minor accounting nuance, noted)
+   262→   262→- Next-phase candidates (priority order): (1) staff-wise commission/percentage report per range, (2) bill reprint/WhatsApp from transactions detail dialog, (3) bill note field in billing flow, (4) Hindi/i18n, (5) Firebase migration when keys available
+   263→   263→- Pre-existing non-src tsc errors remain in examples/ + skills/ demo folders (out of scope, untouched)
+   264→   264→
+   265→   265→---
+   266→   266→Task ID: 6 (cron review round 2)
+   267→   267→Agent: main (Z.ai Code)
+   268→   268→Task: Scheduled review — QA via agent-browser, fix bugs (shell initials, keypad overlap on short viewports, keypad stale-closure), ship staff commission system + bill note + receipt re-share from transactions + styling polish
+   269→   269→
+   270→   270→Current project status / assessment:
+   271→   271→- App was stable end-to-end after Task 5 (login, billing ×3 payment modes, loyalty, void, customer history, exports)
+   272→   272→- QA re-verified: all admin views + billing flow healthy, zero JS errors, zero failed API calls
+   273→   273→- Found 3 real bugs (fixed below); all 3 next-phase candidates from Task 5 implemented
+   274→   274→
+   275→   275→Current goals / completed modifications / verification results:
+   276→   276→1. QA: agent-browser walkthrough (admin dashboard/transactions/services/staff/customers/settings, billing E2E, staff role gating, dark mode) — zero page errors throughout
+   277→   277→2. BUG FIXES:
+   278→   278→   - Shell account chip showed "R(" for "Ravi (Owner)" — Task 4's initials fix missed app-shell.tsx; applied the same alpha-word filter + fallback
+   279→   279→   - Customer step keypad bottom rows (8/9/0/⌫/✓) were COVERED by the sticky Continue bar on short viewports (bar top 505 < keypad bottom 577 at 1280×577) — unacceptable for non-computer-literate staff. Fixed with height-responsive compaction via Tailwind arbitrary media variants `[@media(max-height:740px)]:` on keypad buttons (h-12), gaps, display box, heading margin, subtitle, step pills (h-9) and steps-container margin. Verified: coveredKeys 0, keypad clears bar by 18px at 577px viewport; normal viewports untouched (media query ≤740px only)
+   280→   280→   - Keypad stale-closure bug: useKeypad press() read `digits` from closure — batched/simultaneous presses (fast two-finger taps) dropped digits. Rewrote with digitsRef mirror (setSafe pattern). Same fix applied to the login PIN pad (pinRef). Both verified with synchronous batched programmatic entry
+   281→   281→   - Dev server ops: the sandbox kills process groups when a tool call ends — a plain `nohup bun run dev &` does NOT survive; the working recipe after a needed restart (Prisma client reload) is `bash -c '(setsid bun run dev </dev/null >>/tmp/dev-server.out 2>&1 &)'` (double-fork detach). Radix dropdown menus only respond to REAL pointer clicks (agent-browser click), not JS .click() — relevant for future automated QA
+   282→   282→3. NEW FEATURE — Staff commission system:
+   283→   283→   - Schema: User.commissionPct Float @default(0) (db:push applied; dev server restarted)
+   284→   284→   - Staff API: POST/PUT accept commissionPct (0–100, zod-validated); StaffDTO + serialize include it
+   285→   285→   - Stats API: topStaff now { userId, name, commissionPct, revenue, bills, commission } — keyed by staffId, names/rates from current user records, revenue × pct
+   286→   286→   - Dashboard Staff Performance card: emerald total-commission BadgePercent badge, per-staff "N% commission" line + "+₹X" payout, explainer footnote (only when any rate > 0)
+   287→   287→   - Staff view: Commission % field in Add + Edit dialogs (digit/decimal filter, 0–100 validation, %-suffix icon, helper text), emerald chip on grid cards; edit prefills current rate
+   288→   288→   - Seed: Priya 10%, Amit 7.5% (demo); verified E2E: dashboard "Commission ₹1,644.38" badge, per-staff rates, PUT API round-trip
+   289→   289→4. NEW FEATURE — Bill note (optional, 200 chars):
+   290→   290→   - Payment step: collapsed "+ Add note (optional)" dashed chip → amber StickyNote input (autoFocus, Cancel when empty, disabled while submitting); note state owned by billing-flow orchestrator, reset on New Bill
+   291→   291→   - POST body gains note (API already accepted it); verified persisted (SX-0055 "Guest requested head massage at home")
+   292→   292→   - Displays on: success receipt card (amber chip), WhatsApp receipt text, receipt PDF (wrapped, page-overflow guard), transactions detail dialog (amber StickyNote panel), customer history cards, CSV export (new Note column)
+   293→   293→5. NEW FEATURE — Receipt re-share/reprint from transactions detail:
+   294→   294→   - 3-button row: WhatsApp (wa.me/91{mobile}, walk-ins → navigator.share → clipboard fallback), Copy (clipboard + toast), PDF (downloadReceiptPdf reuse from billing/receipt-pdf)
+   295→   295→   - All disabled for VOIDED bills with explanatory caption; mirrors success-screen logic
+   296→   296→6. STYLING POLISH (mandatory):
+   297→   297→   - Receipt zigzag "torn edge" (.receipt-teeth ::after in globals.css — dual linear-gradient teeth, theme-aware via var(--card), drop-shadow border tint, hidden in print) on the success receipt card; VLM-verified clean
+   298→   298→   - Success hero: soft emerald radial glow behind the check mark
+   299→   299→   - Login user tiles: role icon badges (ShieldCheck admin / Scissors staff) on avatar circles, hover lift (-translate-y + border-primary/40 + shadow), demo-PIN footer contrast bump
+   300→   300→   - Customer step sticky bar: backdrop-blur + bg-background/80
+   301→   301→7. Final verification: `bun run lint` clean; `bunx tsc --noEmit` zero errors in src/; dev.log all 200s; E2E as admin (Ravi) and staff (Priya) with zero page errors; VLM design reviews of login + success + detail screens all positive
+   302→   302→
+   303→   303→Unresolved issues or risks, and priority recommendations for the next phase:
+   304→   304→- Sonner toast top-center can momentarily overlap the login logo (transient, cosmetic — noted by VLM; acceptable sonner behavior)
+   305→   305→- Commission uses each staff member's CURRENT rate applied to historical range revenue (documented on the dashboard card); no per-bill historical commission snapshot — fine for a small salon, revisit if payouts need audit-proof history
+   306→   306→- Staff view "Edit" toast says "Staff updated" also when only commission changed (minor copy nuance)
+   307→   307→- Landscape phones <540px height: customer step still needs slight scroll (content 502px + header 64px) — acceptable edge case
+   308→   308→- Next-phase candidates (priority order): (1) Hindi/i18n toggle, (2) customer last-visit services hint on billing step 2 (lookup gains lastBill), (3) Firebase migration when keys are available, (4) daily summary WhatsApp to owner (cron-style), (5) offline bill queueing via IndexedDB
+   309→   309→- Demo data note: SX-0054 (Rahul, loyalty 10%, cash ₹135) and SX-0055 (walk-in, card ₹150, note) created during this round's E2E and left in as demo data; Priya/Amit commission rates set live via API (10%/7.5%)
+   310→   310→
+   311→   311→---
+   312→   312→Task ID: 7 (cron review round 3)
+   313→   313→Agent: main (Z.ai Code)
+   314→   314→Task: Scheduled review — QA via agent-browser, fix findings, ship 4 new features (custom amount items, last-visit hint, owner WhatsApp summary, Hindi i18n) + styling polish
+   315→   315→
+   316→   316→Current project status / assessment:
+   317→   317→- App was fully stable end-to-end after Task 6 (login, billing ×3 payment modes, loyalty, void, customer history, commissions, exports)
+   318→   318→- QA re-verified this round: full billing E2E (loyalty → cash with change calc → SX-0056), admin dashboard/transactions/customers, staff role gating (Priya sees only Billing), mobile 390px no-overflow, dark mode, zero JS errors throughout
+   319→   319→- One QA finding investigated deeply: rapid keypad taps appeared to "drop" digits — proven NOT a state bug (digitsRef mirror is correct; all clicks eventually process). Root cause: AnimatePresence mode="wait" on the digits display kept the OLD span mounted during exit, so the visible text lagged while state was correct. FIXED by switching to mode="popLayout" (exiting span pops absolute, entering span renders in-flow instantly) + added exit position:'absolute'. Verified: in-flow span shows latest digits immediately after 7 rapid clicks.
+   320→   320→
+   321→   321→Current goals / completed modifications / verification results:
+   322→   322→1. NEW FEATURE — Custom Amount / ad-hoc items (real salons constantly bill product sales & negotiated prices):
+   323→   323→   - API: POST /api/transactions items now accept a union — {serviceId, qty} (menu) OR {name (1-60), price (₹0.5-100k), qty} (custom); custom items snapshot name+price on the bill with serviceId=null (schema already supported this — zero migration)
+   324→   324→   - Store: CartItem gains custom?: boolean; newCustomItemId() generates unique synthetic ids so custom lines never merge; submit maps custom items to {name, price, qty}
+   325→   325→   - UI: amber dashed "Custom Amount" card at the end of every service grid → dialog (optional name, ₹ amount input with validation ≥₹0.50, Enter-to-add) → adds to cart; cart drawer + payment summary + receipts show them with an amber "CUSTOM"/"अन्य" badge; CSV/ledger/void/customer-history all render custom items via serviceName as before
+   326→   326→   - Verified E2E: dialog → "Hair serum" ₹350 + Haircut ₹150 → 10% loyalty → SX-0058 ₹450 cash; API-level mixed bill SX-0057 (custom 350 + service 1500 = 1850); invalid serviceId still 400s
+   327→   327→2. NEW FEATURE — Last-visit services hint (staff can say "same as last time?"):
+   328→   328→   - API: GET /api/customers/lookup returns lastVisit {billNo, date, services[] (qty>1 → "Name x2"), total, paymentMethod} from the latest COMPLETED bill; null when not found
+   329→   329→   - UI: LastVisitHint component (History icon + date + ₹total + up to 3 service chips + "+N more") inside BOTH returning-customer cards (banner & plain variants); LastVisitDTO added to types
+   330→   330→   - Verified: Rahul Sharma → "Last visit · 12 Oct 2026 · ₹5,310" with chips [Haircut (Women)] [Groom Package x2] [Aroma Therapy]
+   331→   331→3. NEW FEATURE — Owner daily-summary WhatsApp share:
+   332→   332→   - Schema: Settings.ownerMobile String? (db:push applied, server restarted with the setsid recipe); settings PUT validates 10 digits; SettingsView gains "Owner WhatsApp number" field (digit-filtered input) in Salon Profile card
+   333→   333→   - Dashboard: emerald "Share Summary" button next to RangePicker — builds a formatted range summary (salon name, revenue, bills, avg, cash/UPI/card split, top 3 services, staff commission, new/returning) → wa.me/91{ownerMobile} (pre-addressed) or wa.me picker when unset
+   334→   334→   - Verified: without ownerMobile → api.whatsapp.com with full text; after saving 9876500000 → URL pre-addressed phone=919876500000; settings round-trip persisted
+   335→   335→4. NEW FEATURE — Hindi language toggle for staff-facing screens (admin stays English by design):
+   336→   336→   - New src/lib/i18n.ts: en/hi dictionaries (~110 keys) covering login + all 4 billing steps (labels, dialogs, toasts, arias); Dict type = typeof en (no as const — literal types broke hi: Dict)
+   337→   337→   - Store: lang state + setLang (persists localStorage 'sx-lang', initialized once at store creation; splash/hydration gate prevents SSR mismatch); useT() hook returns the active dict
+   338→   338→   - LangToggle component (shell/lang-toggle.tsx): pill button showing the OTHER language (अ/EN), placed top-right on login + next to step pills in billing; all step labels/buttons/dialogs/toasts translated (e.g. "सेवाएं/ग्राहक/पेमेंट", "नकद गिनें और पक्का करें", "पेमेंट मिल गया", "भुगतान पूरा", "10% छूट लगाएं")
+   339→   339→   - Verified E2E in Hindi: login screen, service grid + custom card (अन्य रकम), cart drawer (उप-योग), customer step + loyalty banner + last-visit hint (पिछली बार), payment (UPI dialog), success (भुगतान पूरा · SX-0059 ₹135); persistence across logout confirmed; toggle back to EN works
+   340→   340→5. STYLING POLISH (mandatory):
+   341→   341→   - Category icon tiles: every service card gains a colored icon chip (Scissors/rose for cutting, Zap/amber for shave, Sparkles/emerald for facial, Palette/teal for color, Flower2/orange for spa, Gift for packages, keyword-matched with fallback) — VLM review: "icons rendering clearly, color-coding effective, contrast excellent"
+   342→   342→   - Service cards get subtle stagger-in animation (delay capped at 2×0.02s); cart steppers use a cleaner − glyph
+   343→   343→   - VLM flagged a "banner overlaps sticky bar" at mid-scroll — programmatically proven to be standard sticky behavior (full scroll clears it; same pattern as the step-1 cart bar); no fix needed
+   344→   344→6. Bug fixes: store setLang extra paren (syntax error caught by lint); removed unused STEP_LABELS; i18n literal-type fix
+   345→   345→7. Final verification: bun run lint CLEAN; bunx tsc --noEmit ZERO errors in src/ (examples/skills pre-existing only); dev.log all 200s (401s were curl traces); zero page errors; VLM design reviews positive
+   346→   346→
+   347→   347→Unresolved issues or risks, and priority recommendations for the next phase:
+   348→   348→- Receipt text/PDF (customer-facing) stays English — standard practice in India, but a Hindi receipt variant is a candidate if users ask
+   349→   349→- Custom items use price snapshot at bill time (correct); editing a bill isn't supported (by design — void & rebill)
+   350→   350→- Language toggle is per-DEVICE (localStorage) — staff sharing a device share the language; a per-user langPref column is the upgrade path if needed
+   351→   351→- Landscape phones <540px height still need slight scroll on customer step (pre-existing, acceptable)
+   352→   352→- Next-phase candidates (priority): (1) offline bill queueing via IndexedDB + service-worker sync, (2) expense tracking (rent/supplies) for true P&L, (3) per-user language preference, (4) Firebase migration when keys are available, (5) SMS reminders for customers who haven't visited in 60+ days (lapsed-customer win-back list on Customers view)
+   353→   353→- Demo data note: SX-0057 (custom ₹350 + Hair Straightening ₹1500, UPI... actually CASH, Rahul), SX-0058 (Hair serum ₹350 + Haircut ₹150, 10% loyalty, CASH ₹450), SX-0059 (Haircut ₹150, 10% loyalty, UPI ₹135) created during this round's E2E and left in as demo data; ownerMobile set to 9876500000; Priya/Amit session cookies for the WhatsApp-tab reload re-login as needed
+   354→   354→
+   355→   355→---
+   356→   356→Task ID: 8 (cron review round 4)
+   357→   357→Agent: main (Z.ai Code)
+   358→   358→Task: Scheduled review — QA via agent-browser, ship expense tracking with P&L (true salon accounting) + lapsed-customer win-back with WhatsApp reminders + styling polish
+   359→   359→
+   360→   360→Current project status / assessment:
+   361→   361→- App stable after round 3 (custom amounts, last-visit hints, owner WhatsApp summary, Hindi i18n) — QA re-verified with zero JS errors
+   362→   362→- This round's focus chosen from the round-3 priority list: expense tracking for a true P&L (the original brief was "salon accounting software") + lapsed-customer win-back
+   363→   363→
+   364→   364→Current goals / completed modifications / verification results:
+   365→   365→1. NEW FEATURE — Expense tracking (rent, supplies, salaries…):
+   366→   366→   - Schema: new Expense model {category, description?, amount, date (the day it occurred — owners can log past expenses), createdByName snapshot}; db:push applied; dev server restarted (setsid recipe)
+   367→   367→   - API /api/expenses (ADMIN only — staff gets 401, verified): GET ?from&to&category&page&limit → {data: ExpenseDTO[], total, summary {total, byCategory {amount, count}}} (summary covers the WHOLE filter, 30-day default, date-desc ordering); POST {category enum, description≤120, amount ≥₹0.50, date? YYYY-MM-DD local-day}; PUT partial; DELETE ?id (404 guards)
+   368→   368→   - 7 fixed categories: RENT / SUPPLIES / SALARY / UTILITY / MARKETING / MAINTENANCE / OTHER
+   369→   369→   - Admin UI: new Expenses view (nav item Wallet icon, desktop sidebar + mobile More drawer; 'expenses' added to store View union). Range picker + category filter chips (scrollable, right-edge fade) + summary card (total, animated per-category bars, entry count) + entry rows (category icon tile, description/date/by, −₹amount, edit/delete) + Add/Edit dialog (category 2-col buttons, big ₹ input with ≥0.50 validation, optional description, date input capped at today, Enter-to-save) + delete AlertDialog; mutations invalidate ['expenses-list'] + ['stats']; empty state with contextual hint
+   370→   370→   - Demo data: 5 expenses seeded via API (rent ₹15,000, supplies ₹3,200, salary ₹2,400, electricity ₹1,850, marketing ₹800 → ₹23,250/month)
+   371→   371→   - Verified E2E: 30-day view shows all 5 + bars; add "Hair colour tubes" ₹450 (dialog → toast → list) → delete it (confirm dialog → toast); Supplies filter shows 2 entries; PUT round-trip 2400→2600→2400
+   372→   372→2. NEW FEATURE — Dashboard P&L strip (revenue − expenses = net profit):
+   373→   373→   - /api/stats response gains expenses {total, count, byCategory} aggregated over the SAME range (date-based)
+   374→   374→   - ProfitStrip card under the KPI grid: Revenue / −Expenses / Net Profit columns (emerald profit, rose expenses, destructive loss), expense-share-of-revenue proportion bar, Margin %, top-4 category chips, italic hint when no expenses logged; "Manage Expenses" button → expenses view; WhatsApp Share Summary now includes "Expenses: X · *Net profit: Y*" line
+   375→   375→   - Verified: 7-day range → ₹35,477.20 − ₹2,400 = ₹33,077.20, margin 93%, Salary chip; VLM review: "excellent… no technical issues… perfect consistency with KPI cards"
+   376→   376→3. NEW FEATURE — Lapsed-customer win-back (Customers view):
+   377→   377→   - Client-side daysSince(lastVisitAt); lapsed = 60+ days (LAPSED_DAYS constant)
+   378→   378→   - Amber "Nd ago" badges (CalendarClock) on desktop table + mobile cards; amber filter chip "N haven't visited 60+ days" (toggle → shows only lapsed, "Showing N" state, empty state "No lapsed customers 🎉"); hint line "Tap 💬 on a row to send a WhatsApp reminder"
+   379→   379→   - ReminderButton per lapsed row (stopPropagation so it doesn't open the history dialog): opens wa.me/91{mobile} with a personalized Hindi-English message ("Namaste {name}! We miss you at {salon}…")
+   380→   380→   - Demo data: Sneha Patel backdated to 92d, Anjali Verma to 74d (direct prisma update; the seed's visit dates cluster within ~8 days)
+   381→   381→   - Verified: chip shows "2 haven't visited 60+ days"; filter shows exactly 2; reminder opens api.whatsapp.com/send?phone=919765432109 with the full message; VLM: "highly visible… strong affordance… no issues"
+   382→   382→4. STYLING POLISH (mandatory): category icon tiles on expense rows/summary (Home/Package/UsersRound/Lightbulb/Megaphone/Wrench/TrendingDown with themed soft colors); staggered row animations; VLM feedback applied (chips-row scroll fade + extra summary/list separation)
+   383→   383→5. Final verification: bun run lint CLEAN; bunx tsc --noEmit zero errors in src/; dev.log clean; zero page errors through every E2E; mobile 390px fine (More drawer gains Expenses)
+   384→   384→
+   385→   385→Unresolved issues or risks, and priority recommendations for the next phase:
+   386→   386→- Expenses have no VOID/audit trail (delete is permanent) — acceptable for small salons; a soft-delete + audit log is the upgrade path
+   387→   387→- Expense date is a plain day (no time); the P&L uses the same local day boundaries as transactions — consistent
+   388→   388→- Lapsed detection is client-side on the LOADED pages (infinite scroll) — the chip count reflects loaded rows only (fine for salons with < a few hundred customers)
+   389→   389→- Reminder message is hard-coded EN+Hindi mix; a settings template is a future option
+   390→   390→- Next-phase candidates (priority): (1) offline bill queueing via IndexedDB + SW sync, (2) expense CSV/PDF export + monthly comparison chart, (3) per-user language preference, (4) Firebase migration when keys available, (5) customer birthday reminder list (needs DOB field)
+   391→   391→- Demo data note: 5 expenses left in as demo data (see above); Sneha Patel/Anjali Verma lastVisitAt backdated 92d/74d to demo the win-back feature
+   392→   392→
+   393→   393→---
+   394→   394→Task ID: 9 (user-requested round — PDF receipt sharing)
+   395→   395→Agent: main (Z.ai Code)
+   396→   396→Task: User request — "to whatsapp or any other share — it should be like PDF which we are printing, not text". Replaced all text-based receipt sharing with the actual printed-style A5 PDF; QA via agent-browser; fixed a short-viewport skip-button bug found during QA.
+   397→   397→
+   398→   398→Current project status / assessment:
+   399→   399→- App was stable after Task 8 (login, billing ×3 payment modes, loyalty, custom amounts, void, customer history, commissions, expenses/P&L, win-back, Hindi i18n)
+   400→   400→- Dev server had been killed by the sandbox between rounds — restarted with the setsid recipe (known ops note from Task 6)
+   401→   401→- QA performed as admin (Ravi) end-to-end: login → billing (cash ₹200 w/ mobile, walk-in ₹150) → success screen → share actions; transactions detail re-share; Hindi flow; zero page errors throughout
+   402→   402→
+   403→   403→Current goals / completed modifications / verification results:
+   404→   404→1. CORE CHANGE — Receipt sharing now delivers the SAME A5 PDF that Print/Download PDF produce (never a text receipt):
+   405→   405→   - receipt-pdf.ts refactored: extracted buildReceiptDoc(t,s) (single source of truth); downloadReceiptPdf uses it; NEW receiptPdfFile(t,s) → jsPDF output('blob') wrapped as File (application/pdf); canShareFiles(file) → navigator.canShare({files}) check; buildReceiptShareNote(t,s) → short thank-you note that travels WITH the file (customer name greeting, billNo, ₹total, services, "PDF receipt attached 📄")
+   406→   406→   - NEW src/components/billing/receipt-share.ts — shareReceiptPdf(t, s, {whatsapp, L}) with 3 branches:
+   407→   407→     a) Mobile (Web Share API Level 2): navigator.share({files:[pdf], title, text}) → native share sheet → picking WhatsApp delivers the PDF as a document attachment
+   408→   408→     b) Desktop WhatsApp (customer has mobile): window.open wa.me/91{mobile} with the SHORT note (not the old full text receipt) + downloadReceiptPdf + toast "PDF downloaded — attach it in the WhatsApp chat" (+ billNo · ₹total description)
+   409→   409→     c) Desktop generic/walk-in: downloadReceiptPdf + note copied to clipboard + toast "PDF receipt downloaded — send it to your customer"
+   410→   410→   - Success screen (success-step.tsx): WhatsApp + More Share now call shareReceiptPdf; removed old buildReceiptText/shareOrCopy text paths
+   411→   411→   - Transactions detail (transactions-view.tsx): handleShareWhatsApp → shareReceiptPdf(bill, settings, {whatsapp:true, L:en}); button relabelled "WhatsApp PDF"; captions updated ("Sends the printed-style PDF receipt to the customer's WhatsApp chat." / "Walk-in bill — the PDF downloads so you can send it anywhere."); Copy button intentionally still copies TEXT (explicitly labelled "Copy", useful for pasting anywhere)
+   412→   412→   - buildReceiptText remains for the Copy action only
+   413→   413→2. STYLING POLISH (mandatory): Success-screen action buttons upgraded to two-line POS-style labels — WhatsApp/More Share get a "PDF receipt" subtitle (emerald-100/80 on the green button, muted on outline), Download PDF/Print get the billNo (e.g. SX-0062) subtitle; i18n key pdfReceiptLabel (en/hi)
+   414→   414→3. NEW i18n keys (en + hi): pdfWhatsappHint, pdfShareHint, pdfReceiptLabel
+   415→   415→4. BUG FOUND & FIXED DURING QA — customer-step skip button covered by sticky Continue bar on short viewports (agent-browser click failed with "covered by div.sticky.bottom-4"; measured skipBottom 551 vs stickyTop 505 = −46px at 1280×577):
+   416→   416→   - Root cause: the "Skip — Walk-in" button was INSIDE the lookup-results wrapper (never :empty → wrapper's mt-5 always occupied 20px) and had no short-viewport compaction; round-6's fix only covered the keypad
+   417→   417→   - Fix set (all [@media(max-height:740px)]-gated, normal viewports untouched): skip button moved OUTSIDE the wrapper; wrapper gains empty:hidden (collapses fully when no lookup state) + mt-3; skip gets mt-2/min-h-10; keypad keys h-12→h-11 (44px — still ≥ Apple touch minimum); keypad gap-2→gap-1.5; cart chip py-2→py-1; display box min-h-11→min-h-10; H1 +text-lg; billing-flow root +pt-3! (beats lg:p-6)
+   418→   418→   - Verified: clearance −46 → +12px at 577px (programmatic) + VLM review "skip fully visible, keypad fully visible, no overlaps"; 900px tall viewport unchanged (+24 flow clearance, 80px keys); walk-in undo panel state unaffected
+   419→   419→5. VERIFICATION (all via agent-browser on headless Chromium, which has NO Web Share API — perfect for desktop-fallback testing):
+   420→   420→   - Desktop WhatsApp fallback: wa.me tab opened with phone=917896543210 + short note (VLM confirmed the WhatsApp landing page message bubble); toast "PDF downloaded — attach it in the WhatsApp chat · SX-0061 · ₹200" (VLM-verified); zero JS errors
+   421→   421→   - Desktop More Share/walk-in: toast "PDF receipt downloaded — send it to your customer · SX-0062 · ₹150"
+   422→   422→   - MOBILE BRANCH SIMULATED by stubbing navigator.canShare/share in-page: navigator.share received a REAL PDF File — {name:"SaloonX-SX-0061.pdf", size:4762, type:"application/pdf"} + note + title "Receipt SX-0061" → on real Android/iOS this hands the actual PDF to WhatsApp as an attachment
+   423→   423→   - Hindi E2E (bill SX-0062 walk-in cash): success screen shows व्हाट्सएप/और शेयर + "PDF रसीद" subtitles; exact toast DOM text captured: "PDF रसीद डाउनलोड हो गई — इसे ग्राहक को भेज दें | SX-0062 · ₹150"; language reset to EN afterwards
+   424→   424→   - bun run lint CLEAN; bunx tsc --noEmit ZERO errors in src/; dev.log all 200s
+   425→   425→6. Ops: dev server restarted once (setsid recipe); agent-browser notes — refs go stale across tab switches (re-snapshot), window.open steals active tab (stub it or accept the landing-page screenshot), sonner toasts live ~4s (capture fast or query [data-sonner-toast])
+   426→   426→
+   427→   427→Unresolved issues or risks, and priority recommendations for the next phase:
+   428→   428→- On mobile, Web Share L2 cannot deep-link DIRECTLY into a specific WhatsApp chat (platform limitation) — the share sheet adds one extra tap vs the old wa.me text link; this is the only way to attach a file and is standard POS behaviour
+   429→   429→- Toast can transiently overlap the top of the success receipt card (known sonner cosmetic from earlier rounds, unchanged)
+   430→   430→- Viewports 741–800px tall still require ~95px of scroll on the customer step (pre-existing; real browsers on 768–900px screens have ~60–80px chrome → mostly inside the ≤740 compaction band)
+   431→   431→- jsPDF A5 PDF uses "Rs." (font limitation, unchanged); the share note uses ₹ (fine in WhatsApp)
+   432→   432→- Next-phase candidates (priority): (1) offline bill queueing via IndexedDB + SW sync, (2) expense CSV/PDF export + monthly comparison chart, (3) per-user language preference, (4) Firebase migration when keys available, (5) customer birthday reminders (needs DOB field)
+   433→   433→- Demo data note: SX-0061 (₹200 cash, new customer 7896543210, no name) and SX-0062 (₹150 walk-in cash) created during this round's E2E and left in as demo data; screenshots in download/ (success-whatsapp-pdf-toast.png, success-more-share-toast.png, txn-whatsapp-attach-toast.png, hindi-success-share-toast.png, customer-step-short-viewport-fixed.png)
+   434→   434→

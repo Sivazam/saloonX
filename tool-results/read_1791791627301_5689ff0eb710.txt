@@ -1,0 +1,728 @@
+     1→'use client'
+     2→
+     3→import { useMemo, useState } from 'react'
+     4→import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+     5→import { motion } from 'framer-motion'
+     6→import {
+     7→  AlertTriangle,
+     8→  Ban,
+     9→  Banknote,
+    10→  Copy,
+    11→  CreditCard,
+    12→  Download,
+    13→  FileDown,
+    14→  Loader2,
+    15→  QrCode,
+    16→  ReceiptText,
+    17→  RotateCcw,
+    18→  Search,
+    19→  StickyNote,
+    20→} from 'lucide-react'
+    21→import { cn } from '@/lib/utils'
+    22→import { apiGet, apiPut } from '@/lib/api-client'
+    23→import { formatDateTime, formatDate, formatINR, formatTime } from '@/lib/format'
+    24→import type {
+    25→  PaymentMethod,
+    26→  SettingsDTO,
+    27→  TransactionDTO,
+    28→  TransactionsResponse,
+    29→} from '@/lib/types'
+    30→import { toast } from 'sonner'
+    31→import { Badge } from '@/components/ui/badge'
+    32→import { Button } from '@/components/ui/button'
+    33→import {
+    34→  Dialog,
+    35→  DialogContent,
+    36→  DialogDescription,
+    37→  DialogFooter,
+    38→  DialogHeader,
+    39→  DialogTitle,
+    40→} from '@/components/ui/dialog'
+    41→import { Input } from '@/components/ui/input'
+    42→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    43→import { Skeleton } from '@/components/ui/skeleton'
+    44→import {
+    45→  Table,
+    46→  TableBody,
+    47→  TableCell,
+    48→  TableHead,
+    49→  TableHeader,
+    50→  TableRow,
+    51→} from '@/components/ui/table'
+    52→import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+    53→import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+    54→import { EmptyState, METHOD_META, MethodBadge, useDebouncedValue, type StaffListResponse } from './ui-atoms'
+    55→import { RangePicker, computePreset, type DateRange } from './range-picker'
+    56→import { downloadReportPdf } from './report-pdf'
+    57→import { buildReceiptText, downloadReceiptPdf } from '@/components/billing/receipt-pdf'
+    58→import { shareReceiptPdf } from '@/components/billing/receipt-share'
+    59→import { en } from '@/lib/i18n'
+    60→import { useAppStore } from '@/store/use-app-store'
+    61→
+    62→/* ── Status badge (Paid / Voided) ─────────────────────────────────────────── */
+    63→
+    64→export function StatusBadge({ status }: { status: string }) {
+    65→  if (status === 'VOIDED') {
+    66→    return (
+    67→      <Badge className="gap-1 border-transparent bg-red-100 text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-950">
+    68→        <Ban className="size-3" aria-hidden />
+    69→        Voided
+    70→      </Badge>
+    71→    )
+    72→  }
+    73→  return (
+    74→    <Badge className="border-transparent bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
+    75→      Paid
+    76→    </Badge>
+    77→  )
+    78→}
+    79→
+    80→/* ── Bill detail (receipt-style) + void action ─────────────────────────────── */
+    81→
+    82→function BillDetailDialog({
+    83→  bill,
+    84→  settings,
+    85→  isAdmin,
+    86→  onClose,
+    87→}: {
+    88→  bill: TransactionDTO | null
+    89→  settings?: SettingsDTO
+    90→  isAdmin: boolean
+    91→  onClose: () => void
+    92→}) {
+    93→  const queryClient = useQueryClient()
+    94→  const [voidOpen, setVoidOpen] = useState(false)
+    95→  const [reason, setReason] = useState('')
+    96→
+    97→  const isVoided = bill?.status === 'VOIDED'
+    98→
+    99→  /* Re-send the receipt as the printed-style PDF — never a text receipt. */
+   100→  function handleShareWhatsApp() {
+   101→    if (!bill || !settings) return
+   102→    shareReceiptPdf(bill, settings, { whatsapp: true, L: en })
+   103→  }
+   104→
+   105→  function handleCopyReceipt() {
+   106→    if (!bill || !settings) return
+   107→    void navigator.clipboard.writeText(buildReceiptText(bill, settings))
+   108→    toast.success('Receipt copied to clipboard')
+   109→  }
+   110→
+   111→  function handleDownloadReceipt() {
+   112→    if (!bill || !settings) return
+   113→    downloadReceiptPdf(bill, settings)
+   114→    toast.success(`Downloading ${bill.billNo} receipt…`)
+   115→  }
+   116→
+   117→  const voidMutation = useMutation({
+   118→    mutationFn: () =>
+   119→      apiPut<{ transaction: TransactionDTO }>('/api/transactions/void', {
+   120→        id: bill?.id,
+   121→        reason: reason.trim() || undefined,
+   122→      }),
+   123→    onSuccess: (res) => {
+   124→      toast.success(`Bill ${res.transaction.billNo} voided`)
+   125→      setVoidOpen(false)
+   126→      setReason('')
+   127→      onClose()
+   128→      void queryClient.invalidateQueries({ queryKey: ['transactions-list'] })
+   129→      void queryClient.invalidateQueries({ queryKey: ['stats'] })
+   130→      void queryClient.invalidateQueries({ queryKey: ['recent-bills'] })
+   131→      void queryClient.invalidateQueries({ queryKey: ['staff'] })
+   132→      void queryClient.invalidateQueries({ queryKey: ['customers-list'] })
+   133→    },
+   134→    onError: (e: Error) => toast.error(e.message),
+   135→  })
+   136→
+   137→  return (
+   138→    <>
+   139→      <Dialog open={!!bill} onOpenChange={(open) => !open && onClose()}>
+   140→        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
+   141→          {bill && (
+   142→            <>
+   143→              <DialogHeader className="border-b pb-4 text-center sm:text-center">
+   144→                <DialogTitle className="font-mono text-base tracking-wide">{bill.billNo}</DialogTitle>
+   145→                <DialogDescription>
+   146→                  {settings?.salonName ? `${settings.salonName} · ` : ''}
+   147→                  {formatDateTime(bill.createdAt)}
+   148→                </DialogDescription>
+   149→              </DialogHeader>
+   150→
+   151→            <div className="space-y-4">
+   152→              <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-muted/60 p-3 text-sm">
+   153→                <div className="min-w-0">
+   154→                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Customer</p>
+   155→                  <p className="mt-0.5 truncate font-medium">
+   156→                    {bill.customerName || bill.customerMobile || (
+   157→                      <span className="italic text-muted-foreground">Walk-in</span>
+   158→                    )}
+   159→                  </p>
+   160→                </div>
+   161→                <div className="min-w-0">
+   162→                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Served by</p>
+   163→                  <p className="mt-0.5 truncate font-medium">{bill.staffName}</p>
+   164→                </div>
+   165→                <div>
+   166→                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Payment</p>
+   167→                  <div className="mt-1">
+   168→                    <MethodBadge method={bill.paymentMethod} />
+   169→                  </div>
+   170→                </div>
+   171→                <div>
+   172→                  <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Status</p>
+   173→                  <div className="mt-1">
+   174→                    <StatusBadge status={bill.status} />
+   175→                  </div>
+   176→                </div>
+   177→              </div>
+   178→
+   179→              {bill.status === 'VOIDED' && (
+   180→                <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/50">
+   181→                  <Ban className="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+   182→                  <div className="min-w-0">
+   183→                    <p className="font-semibold text-red-800 dark:text-red-300">
+   184→                      Voided {bill.voidedAt ? `· ${formatDateTime(bill.voidedAt)}` : ''}
+   185→                    </p>
+   186→                    {bill.voidReason && (
+   187→                      <p className="mt-0.5 text-red-700/90 dark:text-red-400/90">Reason: {bill.voidReason}</p>
+   188→                    )}
+   189→                    <p className="mt-0.5 text-xs text-red-700/70 dark:text-red-400/70">
+   190→                      This bill is excluded from all revenue reports and customer loyalty counts.
+   191→                    </p>
+   192→                  </div>
+   193→                </div>
+   194→              )}
+   195→
+   196→              {bill.note && (
+   197→                <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/70 dark:bg-amber-950/40">
+   198→                  <StickyNote className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+   199→                  <div className="min-w-0">
+   200→                    <p className="text-[11px] font-medium tracking-wide text-amber-700/80 uppercase dark:text-amber-400/80">
+   201→                      Note
+   202→                    </p>
+   203→                    <p className="mt-0.5 break-words font-medium">{bill.note}</p>
+   204→                  </div>
+   205→                </div>
+   206→              )}
+   207→
+   208→              <div className="space-y-2">
+   209→                {bill.items.map((it) => (
+   210→                  <div key={it.id} className="flex items-baseline gap-2 text-sm">
+   211→                    <p className="min-w-0 flex-1 truncate">
+   212→                      {it.serviceName}
+   213→                      {it.qty > 1 && <span className="text-muted-foreground"> ×{it.qty}</span>}
+   214→                    </p>
+   215→                    <p className="shrink-0 text-xs text-muted-foreground tabular-nums">
+   216→                      {it.qty} × {formatINR(it.price)}
+   217→                    </p>
+   218→                    <p className="w-16 shrink-0 text-right font-medium tabular-nums">
+   219→                      {formatINR(it.price * it.qty)}
+   220→                    </p>
+   221→                  </div>
+   222→                ))}
+   223→              </div>
+   224→
+   225→              <div className="space-y-1.5 border-t pt-3 text-sm">
+   226→                <div className="flex justify-between text-muted-foreground">
+   227→                  <span>Subtotal</span>
+   228→                  <span className="tabular-nums">{formatINR(bill.subtotal)}</span>
+   229→                </div>
+   230→                {bill.discountAmount > 0 && (
+   231→                  <div className="flex justify-between text-muted-foreground">
+   232→                    <span>Discount ({bill.discountPct}%)</span>
+   233→                    <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+   234→                      −{formatINR(bill.discountAmount)}
+   235→                    </span>
+   236→                  </div>
+   237→                )}
+   238→                {bill.gstAmount > 0 && (
+   239→                  <div className="flex justify-between text-muted-foreground">
+   240→                    <span>GST ({bill.gstPct}%)</span>
+   241→                    <span className="tabular-nums">{formatINR(bill.gstAmount)}</span>
+   242→                  </div>
+   243→                )}
+   244→                <div className="flex justify-between border-t pt-2 text-base font-bold">
+   245→                  <span>Total</span>
+   246→                  <span className="tabular-nums">{formatINR(bill.total)}</span>
+   247→                </div>
+   248→              </div>
+   249→
+   250→              {settings?.receiptFooter && (
+   251→                <p className="border-t pt-3 text-center text-xs text-muted-foreground">
+   252→                  {settings.receiptFooter}
+   253→                </p>
+   254→              )}
+   255→            </div>
+   256→
+   257→            <div className="border-t pt-4">
+   258→              <div className="grid grid-cols-3 gap-2">
+   259→                <Button
+   260→                  variant="outline"
+   261→                  className="h-11 gap-1.5"
+   262→                  disabled={isVoided || !settings}
+   263→                  onClick={handleShareWhatsApp}
+   264→                >
+   265→                  <svg viewBox="0 0 24 24" className="size-4" fill="currentColor" aria-hidden>
+   266→                    <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.87 9.87 0 0 0 4.74 1.21c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2m.01 1.67c2.2 0 4.26.86 5.82 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24M8.53 7.33c-.16 0-.43.06-.66.31-.22.25-.87.85-.87 2.07 0 1.22.89 2.4 1 2.56.14.19 1.76 2.84 4.3 3.86 2.13.86 2.56.69 3.02.64.47-.04 1.51-.61 1.72-1.21.21-.6.21-1.11.15-1.21-.06-.1-.22-.16-.47-.28-.25-.13-1.47-.72-1.69-.81-.23-.08-.37-.12-.56.12-.16.25-.64.81-.78.97-.15.16-.29.18-.53.06-.25-.13-1.05-.39-2-1.23-.73-.66-1.23-1.47-1.38-1.72-.14-.25-.01-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.09-.17.04-.31-.02-.44-.06-.12-.56-1.35-.77-1.84-.2-.48-.4-.42-.56-.43l-.48-.01" />
+   267→                  </svg>
+   268→                  WhatsApp PDF
+   269→                </Button>
+   270→                <Button variant="outline" className="h-11 gap-1.5" disabled={isVoided || !settings} onClick={handleCopyReceipt}>
+   271→                  <Copy aria-hidden />
+   272→                  Copy
+   273→                </Button>
+   274→                <Button variant="outline" className="h-11 gap-1.5" disabled={isVoided || !settings} onClick={handleDownloadReceipt}>
+   275→                  <Download aria-hidden />
+   276→                  PDF
+   277→                </Button>
+   278→              </div>
+   279→              <p className="mt-2 text-center text-[11px] text-muted-foreground">
+   280→                {isVoided
+   281→                  ? 'Receipt sharing is disabled for voided bills.'
+   282→                  : bill.customerMobile
+   283→                    ? 'Sends the printed-style PDF receipt to the customer\u2019s WhatsApp chat.'
+   284→                    : 'Walk-in bill — the PDF downloads so you can send it anywhere.'}
+   285→              </p>
+   286→            </div>
+   287→
+   288→            {isAdmin && !isVoided && (
+   289→              <div className="border-t pt-4">
+   290→                <Button
+   291→                  variant="outline"
+   292→                  className="w-full text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-300 dark:hover:bg-red-950/50"
+   293→                  onClick={() => setVoidOpen(true)}
+   294→                >
+   295→                  <Ban aria-hidden />
+   296→                  Void this bill
+   297→                </Button>
+   298→              </div>
+   299→            )}
+   300→          </>
+   301→        )}
+   302→      </DialogContent>
+   303→    </Dialog>
+   304→
+   305→    {/* Void confirmation */}
+   306→    <Dialog open={voidOpen} onOpenChange={(open) => !open && setVoidOpen(false)}>
+   307→      <DialogContent className="sm:max-w-sm">
+   308→        <DialogHeader>
+   309→          <DialogTitle className="flex items-center gap-2">
+   310→            <Ban className="size-5 text-red-600 dark:text-red-400" aria-hidden />
+   311→            Void bill {bill?.billNo}?
+   312→          </DialogTitle>
+   313→          <DialogDescription>
+   314→            The bill stays in the ledger for audit, but is removed from revenue, staff stats and
+   315→            customer loyalty counts. This cannot be undone.
+   316→          </DialogDescription>
+   317→        </DialogHeader>
+   318→        <div className="space-y-2">
+   319→          <label htmlFor="void-reason" className="text-sm font-medium">
+   320→            Reason <span className="text-muted-foreground">(optional)</span>
+   321→          </label>
+   322→          <Input
+   323→            id="void-reason"
+   324→            value={reason}
+   325→            onChange={(e) => setReason(e.target.value)}
+   326→            placeholder="e.g. Wrong amount, cancelled service…"
+   327→            maxLength={200}
+   328→          />
+   329→        </div>
+   330→        <DialogFooter className="gap-2 sm:justify-between">
+   331→          <Button variant="ghost" onClick={() => setVoidOpen(false)} disabled={voidMutation.isPending}>
+   332→            Keep bill
+   333→          </Button>
+   334→          <Button
+   335→            variant="destructive"
+   336→            onClick={() => voidMutation.mutate()}
+   337→            disabled={voidMutation.isPending}
+   338→          >
+   339→            {voidMutation.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <Ban aria-hidden />}
+   340→            Void bill
+   341→          </Button>
+   342→        </DialogFooter>
+   343→      </DialogContent>
+   344→    </Dialog>
+   345→    </>
+   346→  )
+   347→}
+   348→
+   349→/* ── View ──────────────────────────────────────────────────────────────────── */
+   350→
+   351→export default function TransactionsView() {
+   352→  const user = useAppStore((s) => s.user)
+   353→  const [range, setRange] = useState<DateRange>(() => computePreset('30d'))
+   354→  const [method, setMethod] = useState('')
+   355→  const [staffId, setStaffId] = useState('all')
+   356→  const [search, setSearch] = useState('')
+   357→  const [selected, setSelected] = useState<TransactionDTO | null>(null)
+   358→  const debouncedSearch = useDebouncedValue(search, 400)
+   359→
+   360→  const staffQ = useQuery({
+   361→    queryKey: ['staff'],
+   362→    queryFn: () => apiGet<StaffListResponse>('/api/staff'),
+   363→  })
+   364→  const settingsQ = useQuery({
+   365→    queryKey: ['settings'],
+   366→    queryFn: () => apiGet<SettingsDTO>('/api/settings'),
+   367→  })
+   368→
+   369→  const listQ = useInfiniteQuery({
+   370→    queryKey: ['transactions-list', range.from, range.to, method, staffId, debouncedSearch],
+   371→    queryFn: ({ pageParam }) => {
+   372→      const p = new URLSearchParams({
+   373→        from: range.from,
+   374→        to: range.to,
+   375→        page: String(pageParam),
+   376→        limit: '25',
+   377→      })
+   378→      if (method) p.set('method', method)
+   379→      if (staffId !== 'all') p.set('staffId', staffId)
+   380→      if (debouncedSearch) p.set('search', debouncedSearch)
+   381→      return apiGet<TransactionsResponse>(`/api/transactions?${p.toString()}`)
+   382→    },
+   383→    initialPageParam: 1,
+   384→    getNextPageParam: (lastPage, allPages) => {
+   385→      const loaded = allPages.reduce((n, pg) => n + pg.data.length, 0)
+   386→      return loaded < lastPage.total ? allPages.length + 1 : undefined
+   387→    },
+   388→  })
+   389→
+   390→  const rows = useMemo(
+   391→    () => (listQ.data ? listQ.data.pages.flatMap((p) => p.data) : []),
+   392→    [listQ.data],
+   393→  )
+   394→  const summary = listQ.data?.pages[0]?.summary
+   395→  const total = listQ.data?.pages[0]?.total ?? 0
+   396→
+   397→  function resetFilters() {
+   398→    setMethod('')
+   399→    setStaffId('all')
+   400→    setSearch('')
+   401→    setRange(computePreset('30d'))
+   402→  }
+   403→
+   404→  function exportCsv() {
+   405→    toast('Preparing CSV…')
+   406→    window.open(
+   407→      `/api/export/csv?from=${range.from}&to=${range.to}${method ? `&method=${method}` : ''}`,
+   408→      '_blank',
+   409→    )
+   410→  }
+   411→
+   412→  function exportPdf() {
+   413→    if (!rows.length || !summary || !settingsQ.data) return
+   414→    // PDF mirrors the revenue summary: voided bills are excluded (they stay in
+   415→    // the ledger + CSV export for the full audit trail).
+   416→    const paidRows = rows.filter((r) => r.status !== 'VOIDED')
+   417→    if (!paidRows.length) {
+   418→      toast.error('All loaded bills are voided — nothing to export')
+   419→      return
+   420→    }
+   421→    toast('Preparing PDF…')
+   422→    try {
+   423→      downloadReportPdf(paidRows, summary, settingsQ.data, range.from, range.to)
+   424→    } catch (e) {
+   425→      toast.error((e as Error).message)
+   426→    }
+   427→  }
+   428→
+   429→  const pdfDisabled = rows.length === 0 || !settingsQ.data
+   430→
+   431→  return (
+   432→    <div className="p-4 pb-24 lg:p-6 lg:pb-6">
+   433→      {/* Sticky filter bar */}
+   434→      <div className="sticky top-16 z-20 -mx-4 -mt-4 bg-background/95 px-4 pt-4 pb-3 backdrop-blur lg:-mx-6 lg:-mt-6 lg:px-6 lg:pt-6 lg:pb-4">
+   435→        <div className="flex flex-wrap items-center justify-between gap-2">
+   436→          <div>
+   437→            <h1 className="text-xl font-bold tracking-tight lg:text-2xl">Transactions</h1>
+   438→            <p className="mt-0.5 text-sm text-muted-foreground">Search, filter and export bills</p>
+   439→          </div>
+   440→          <div className="flex items-center gap-2">
+   441→            <Tooltip>
+   442→              <TooltipTrigger asChild>
+   443→                <Button variant="outline" size="sm" onClick={exportCsv}>
+   444→                  <Download aria-hidden />
+   445→                  <span className="hidden sm:inline">CSV</span>
+   446→                </Button>
+   447→              </TooltipTrigger>
+   448→              <TooltipContent>Export filtered bills as CSV</TooltipContent>
+   449→            </Tooltip>
+   450→            <Tooltip>
+   451→              <TooltipTrigger asChild>
+   452→                <span className="inline-flex">
+   453→                  <Button variant="outline" size="sm" onClick={exportPdf} disabled={pdfDisabled}>
+   454→                    <FileDown aria-hidden />
+   455→                    <span className="hidden sm:inline">PDF</span>
+   456→                  </Button>
+   457→                </span>
+   458→              </TooltipTrigger>
+   459→              <TooltipContent>
+   460→                {pdfDisabled ? 'No bills to export' : 'Download PDF report of loaded bills'}
+   461→              </TooltipContent>
+   462→            </Tooltip>
+   463→          </div>
+   464→        </div>
+   465→
+   466→        <div className="mt-3 rounded-2xl border bg-card p-3 shadow-sm">
+   467→          <div className="flex flex-wrap items-center gap-2">
+   468→            <RangePicker value={range} onChange={setRange} />
+   469→            <ToggleGroup
+   470→              type="single"
+   471→              variant="outline"
+   472→              size="sm"
+   473→              className="rounded-lg"
+   474→              value={method || 'ALL'}
+   475→              onValueChange={(v) => setMethod(v === 'ALL' || v === '' ? '' : v)}
+   476→            >
+   477→              <ToggleGroupItem value="ALL" className="px-2.5 text-xs">
+   478→                All
+   479→              </ToggleGroupItem>
+   480→              <ToggleGroupItem value="CASH" className="gap-1 px-2.5 text-xs">
+   481→                <Banknote className="size-3.5" aria-hidden />
+   482→                Cash
+   483→              </ToggleGroupItem>
+   484→              <ToggleGroupItem value="UPI" className="gap-1 px-2.5 text-xs">
+   485→                <QrCode className="size-3.5" aria-hidden />
+   486→                UPI
+   487→              </ToggleGroupItem>
+   488→              <ToggleGroupItem value="CARD" className="gap-1 px-2.5 text-xs">
+   489→                <CreditCard className="size-3.5" aria-hidden />
+   490→                Card
+   491→              </ToggleGroupItem>
+   492→            </ToggleGroup>
+   493→            <Select value={staffId} onValueChange={setStaffId}>
+   494→              <SelectTrigger size="sm" className="w-[9.5rem]" aria-label="Filter by staff">
+   495→                <SelectValue placeholder="All staff" />
+   496→              </SelectTrigger>
+   497→              <SelectContent>
+   498→                <SelectItem value="all">All staff</SelectItem>
+   499→                {staffQ.data?.users.map((u) => (
+   500→                  <SelectItem key={u.id} value={u.id}>
+   501→                    {u.name}
+   502→                  </SelectItem>
+   503→                ))}
+   504→              </SelectContent>
+   505→            </Select>
+   506→            <div className="relative min-w-[150px] flex-1 sm:max-w-xs">
+   507→              <Search
+   508→                className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+   509→                aria-hidden
+   510→              />
+   511→              <Input
+   512→                value={search}
+   513→                onChange={(e) => setSearch(e.target.value)}
+   514→                placeholder="Bill no, mobile or name"
+   515→                className="h-8 pl-8 text-sm"
+   516→                aria-label="Search bills"
+   517→              />
+   518→            </div>
+   519→            <Button variant="ghost" size="sm" onClick={resetFilters}>
+   520→              <RotateCcw aria-hidden />
+   521→              Reset
+   522→            </Button>
+   523→          </div>
+   524→        </div>
+   525→      </div>
+   526→
+   527→      {/* Summary strip */}
+   528→      {listQ.isPending ? (
+   529→        <Skeleton className="mt-4 h-[5.5rem] rounded-2xl lg:mt-5" />
+   530→      ) : summary ? (
+   531→        <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl bg-muted/60 p-3 sm:grid-cols-4 lg:mt-5 lg:p-4">
+   532→          <div>
+   533→            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Revenue</p>
+   534→            <p className="mt-0.5 text-lg font-bold tabular-nums">{formatINR(summary.revenue)}</p>
+   535→          </div>
+   536→          <div>
+   537→            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Bills</p>
+   538→            <p className="mt-0.5 text-lg font-bold tabular-nums">{summary.count.toLocaleString('en-IN')}</p>
+   539→          </div>
+   540→          <div>
+   541→            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Avg Bill</p>
+   542→            <p className="mt-0.5 text-lg font-bold tabular-nums">{formatINR(summary.avgBill)}</p>
+   543→          </div>
+   544→          <div>
+   545→            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Payment Split</p>
+   546→            <div className="mt-1 space-y-0.5">
+   547→              {(['CASH', 'UPI', 'CARD'] as PaymentMethod[]).map((m) => (
+   548→                <div key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   549→                  <span className={cn('size-1.5 shrink-0 rounded-full', METHOD_META[m].dotClass)} aria-hidden />
+   550→                  <span className="w-7 shrink-0">{METHOD_META[m].label}</span>
+   551→                  <span className="truncate font-medium text-foreground tabular-nums">
+   552→                    {formatINR(summary.byMethod[m].amount)}
+   553→                  </span>
+   554→                  <span className="tabular-nums">({summary.byMethod[m].count})</span>
+   555→                </div>
+   556→              ))}
+   557→            </div>
+   558→          </div>
+   559→        </div>
+   560→      ) : null}
+   561→
+   562→      {/* Ledger */}
+   563→      {listQ.isPending ? (
+   564→        <div className="mt-4 space-y-2 lg:mt-5">
+   565→          {Array.from({ length: 6 }).map((_, i) => (
+   566→            <Skeleton key={i} className="h-16 rounded-2xl md:h-12" />
+   567→          ))}
+   568→        </div>
+   569→      ) : listQ.isError ? (
+   570→        <div className="mt-4 rounded-2xl border bg-card lg:mt-5">
+   571→          <EmptyState icon={AlertTriangle} title="Could not load bills" hint={(listQ.error as Error).message} />
+   572→          <div className="flex justify-center pb-6">
+   573→            <Button variant="outline" onClick={() => void listQ.refetch()}>
+   574→              Try again
+   575→            </Button>
+   576→          </div>
+   577→        </div>
+   578→      ) : rows.length === 0 ? (
+   579→        <div className="mt-4 rounded-2xl border bg-card lg:mt-5">
+   580→          <EmptyState
+   581→            icon={ReceiptText}
+   582→            title="No bills found"
+   583→            hint="Try widening the date range or clearing the filters."
+   584→          />
+   585→        </div>
+   586→      ) : (
+   587→        <>
+   588→          {/* Desktop table */}
+   589→          <div className="mt-4 hidden overflow-hidden rounded-2xl border bg-card shadow-sm md:block lg:mt-5">
+   590→            <Table>
+   591→              <TableHeader>
+   592→                <TableRow className="hover:bg-transparent">
+   593→                  <TableHead className="pl-4">Bill No</TableHead>
+   594→                  <TableHead>Date &amp; Time</TableHead>
+   595→                  <TableHead>Customer</TableHead>
+   596→                  <TableHead>Services</TableHead>
+   597→                  <TableHead>Staff</TableHead>
+   598→                  <TableHead>Method</TableHead>
+   599→                  <TableHead className="pr-4 text-right">Total</TableHead>
+   600→                </TableRow>
+   601→              </TableHeader>
+   602→              <TableBody>
+   603→                {rows.map((t) => (
+   604→                  <TableRow
+   605→                    key={t.id}
+   606→                    className={cn('cursor-pointer', t.status === 'VOIDED' && 'opacity-60')}
+   607→                    onClick={() => setSelected(t)}
+   608→                  >
+   609→                    <TableCell className="pl-4 font-mono text-[13px] font-semibold">
+   610→                      {t.billNo}
+   611→                    </TableCell>
+   612→                    <TableCell>
+   613→                      <span className="block text-[13px]">{formatDate(t.createdAt)}</span>
+   614→                      <span className="block text-[11px] text-muted-foreground">{formatTime(t.createdAt)}</span>
+   615→                    </TableCell>
+   616→                    <TableCell className="max-w-[160px]">
+   617→                      <span className="block truncate text-[13px]">
+   618→                        {t.customerName || t.customerMobile || (
+   619→                          <span className="italic text-muted-foreground">Walk-in</span>
+   620→                        )}
+   621→                      </span>
+   622→                    </TableCell>
+   623→                    <TableCell className="max-w-[180px]">
+   624→                      <span className="block truncate text-[13px]">{t.items[0]?.serviceName ?? '—'}</span>
+   625→                      {t.items.length > 1 && (
+   626→                        <span className="block text-[11px] text-muted-foreground">
+   627→                          +{t.items.length - 1} more
+   628→                        </span>
+   629→                      )}
+   630→                    </TableCell>
+   631→                    <TableCell className="text-[13px]">{t.staffName}</TableCell>
+   632→                    <TableCell>
+   633→                      <div className="flex items-center gap-1.5">
+   634→                        <MethodBadge method={t.paymentMethod} />
+   635→                        {t.status === 'VOIDED' && <StatusBadge status={t.status} />}
+   636→                      </div>
+   637→                    </TableCell>
+   638→                    <TableCell
+   639→                      className={cn(
+   640→                        'pr-4 text-right font-semibold tabular-nums',
+   641→                        t.status === 'VOIDED' && 'text-muted-foreground line-through',
+   642→                      )}
+   643→                    >
+   644→                      {formatINR(t.total)}
+   645→                    </TableCell>
+   646→                  </TableRow>
+   647→                ))}
+   648→              </TableBody>
+   649→            </Table>
+   650→          </div>
+   651→
+   652→          {/* Mobile cards */}
+   653→          <div className="mt-4 space-y-2.5 md:hidden">
+   654→            {rows.map((t, i) => (
+   655→              <motion.button
+   656→                key={t.id}
+   657→                type="button"
+   658→                initial={{ opacity: 0, y: 6 }}
+   659→                animate={{ opacity: 1, y: 0 }}
+   660→                transition={{ delay: Math.min(i, 6) * 0.03, duration: 0.22 }}
+   661→                onClick={() => setSelected(t)}
+   662→                className="w-full rounded-2xl border bg-card p-3.5 text-left shadow-sm transition-colors hover:bg-accent/50 active:bg-accent"
+   663→              >
+   664→                <div className="flex items-center justify-between gap-2">
+   665→                  <p className="font-mono text-sm font-semibold">{t.billNo}</p>
+   666→                  <p
+   667→                    className={cn(
+   668→                      'text-base font-bold tabular-nums',
+   669→                      t.status === 'VOIDED' && 'text-muted-foreground line-through',
+   670→                    )}
+   671→                  >
+   672→                    {formatINR(t.total)}
+   673→                  </p>
+   674→                </div>
+   675→                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+   676→                  <span>
+   677→                    {formatDate(t.createdAt)}, {formatTime(t.createdAt)}
+   678→                  </span>
+   679→                  <span className="max-w-[45%] truncate">
+   680→                    {t.customerName || t.customerMobile || <span className="italic">Walk-in</span>}
+   681→                  </span>
+   682→                  <div className="flex items-center gap-1.5">
+   683→                    <MethodBadge method={t.paymentMethod} />
+   684→                    {t.status === 'VOIDED' && <StatusBadge status={t.status} />}
+   685→                  </div>
+   686→                </div>
+   687→                <div className="mt-1.5 flex items-center gap-2 text-xs">
+   688→                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+   689→                    {t.items.map((it) => it.serviceName).join(', ')}
+   690→                  </span>
+   691→                  <span className="shrink-0 text-muted-foreground">{t.staffName}</span>
+   692→                </div>
+   693→              </motion.button>
+   694→            ))}
+   695→          </div>
+   696→
+   697→          {/* Load more */}
+   698→          <div className="mt-4 space-y-2">
+   699→            {listQ.hasNextPage && (
+   700→              <Button
+   701→                variant="outline"
+   702→                className="w-full"
+   703→                onClick={() => void listQ.fetchNextPage()}
+   704→                disabled={listQ.isFetchingNextPage}
+   705→              >
+   706→                {listQ.isFetchingNextPage ? (
+   707→                  <Loader2 className="animate-spin" aria-hidden />
+   708→                ) : null}
+   709→                Load more
+   710→              </Button>
+   711→            )}
+   712→            <p className="text-center text-xs text-muted-foreground">
+   713→              Showing {rows.length} of {total.toLocaleString('en-IN')} bills
+   714→            </p>
+   715→          </div>
+   716→        </>
+   717→      )}
+   718→
+   719→      <BillDetailDialog
+   720→        bill={selected}
+   721→        settings={settingsQ.data}
+   722→        isAdmin={user?.role === 'ADMIN'}
+   723→        onClose={() => setSelected(null)}
+   724→      />
+   725→    </div>
+   726→  )
+   727→}
+   728→

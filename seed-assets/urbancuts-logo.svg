@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- UrbanCuts — bold amber "U" with a razor-sharp cream edge -->
+  <rect width="192" height="192" rx="46" fill="#23272E"/>
+  <path d="M 62 52 v 46 a 34 34 0 0 0 68 0 v -46" fill="none" stroke="#E8A54B" stroke-width="19" stroke-linecap="round"/>
+  <line x1="146" y1="66" x2="112" y2="132" stroke="#F6EFE7" stroke-width="8" stroke-linecap="round"/>
+</svg>

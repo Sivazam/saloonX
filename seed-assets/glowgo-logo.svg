@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Glow & Go Salons — three-petal lotus bloom with a golden glow centre -->
+  <rect width="192" height="192" rx="46" fill="#E8785C"/>
+  <ellipse cx="96" cy="112" rx="18" ry="38" fill="#FFF6EF"/>
+  <ellipse cx="64" cy="106" rx="16" ry="34" fill="#FFF6EF" opacity="0.92" transform="rotate(-26 64 106)"/>
+  <ellipse cx="128" cy="106" rx="16" ry="34" fill="#FFF6EF" opacity="0.92" transform="rotate(26 128 106)"/>
+  <ellipse cx="38" cy="118" rx="11" ry="24" fill="#FFF6EF" opacity="0.7" transform="rotate(-46 38 118)"/>
+  <ellipse cx="154" cy="118" rx="11" ry="24" fill="#FFF6EF" opacity="0.7" transform="rotate(46 154 118)"/>
+  <circle cx="96" cy="102" r="11" fill="#F6C453"/>
+</svg>

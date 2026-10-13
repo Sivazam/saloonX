@@ -1,0 +1,1133 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useMemo, useState } from 'react'
+     4→import { useQuery, useQueryClient } from '@tanstack/react-query'
+     5→import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
+     6→import {
+     7→  Area,
+     8→  AreaChart,
+     9→  Bar,
+    10→  BarChart,
+    11→  CartesianGrid,
+    12→  ComposedChart,
+    13→  Line,
+    14→  ResponsiveContainer,
+    15→  Tooltip,
+    16→  XAxis,
+    17→  YAxis,
+    18→} from 'recharts'
+    19→import {
+    20→  AlertTriangle,
+    21→  ArrowRight,
+    22→  BadgePercent,
+    23→  Building2,
+    24→  Cake,
+    25→  Check,
+    26→  FileText,
+    27→  MessageCircle,
+    28→  ReceiptText,
+    29→  Sparkles,
+    30→  TrendingUp,
+    31→  UsersRound,
+    32→  type LucideIcon,
+    33→} from 'lucide-react'
+    34→import { toast } from 'sonner'
+    35→import { cn } from '@/lib/utils'
+    36→import { apiGet, apiPut } from '@/lib/api-client'
+    37→import { formatINR, formatDate, formatTime } from '@/lib/format'
+    38→import type {
+    39→  BirthdayCustomerDTO,
+    40→  BranchProfileDTO,
+    41→  HoursStatsResponse,
+    42→  MethodSummary,
+    43→  MonthlyStatDTO,
+    44→  MonthlyStatsResponse,
+    45→  PaymentMethod,
+    46→  StatsResponse,
+    47→  TransactionDTO,
+    48→  TransactionsResponse,
+    49→} from '@/lib/types'
+    50→import { useAppStore } from '@/store/use-app-store'
+    51→import { Badge } from '@/components/ui/badge'
+    52→import { Button } from '@/components/ui/button'
+    53→import { Skeleton } from '@/components/ui/skeleton'
+    54→import { canShareFiles } from '@/components/billing/receipt-pdf'
+    55→import { EmptyState, METHOD_META, MethodBadge, formatAxisINR, initials, parseDateKey } from './ui-atoms'
+    56→import { RangePicker, computePreset, detectPreset, type DateRange } from './range-picker'
+    57→import { downloadSummaryReportPdf, summaryReportFile, type ReportContext } from './report-pdf'
+    58→import { BusyHoursCard } from './busy-hours-card'
+    59→
+    60→const DAY_MS = 86_400_000
+    61→const RANK_BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+    62→
+    63→const formatCount = (n: number) => Math.round(n).toLocaleString('en-IN')
+    64→
+    65→const round2 = (n: number) => Math.round(n * 100) / 100
+    66→
+    67→const dayFmt = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' })
+    68→
+    69→const PRESET_LABEL: Record<string, string> = {
+    70→  today: 'Today',
+    71→  yesterday: 'Yesterday',
+    72→  '7d': 'Last 7 days',
+    73→  '30d': 'Last 30 days',
+    74→  month: 'This month',
+    75→}
+    76→
+    77→/* ── Animated number (framer-motion value rendered as text) ──────────────── */
+    78→
+    79→function CountUp({ value, format }: { value: number; format: (n: number) => string }) {
+    80→  const mv = useMotionValue(0)
+    81→  const text = useTransform(mv, format)
+    82→  useEffect(() => {
+    83→    const controls = animate(mv, value, { duration: 0.8, ease: 'easeOut' })
+    84→    return () => controls.stop()
+    85→  }, [mv, value])
+    86→  return <motion.span>{text}</motion.span>
+    87→}
+    88→
+    89→/* ── KPI cards ───────────────────────────────────────────────────────────── */
+    90→
+    91→function KpiCard({
+    92→  label,
+    93→  sub,
+    94→  value,
+    95→  format,
+    96→  icon: Icon,
+    97→  chipClass,
+    98→  index,
+    99→}: {
+   100→  label: string
+   101→  sub: string
+   102→  value: number
+   103→  format: (n: number) => string
+   104→  icon: LucideIcon
+   105→  chipClass: string
+   106→  index: number
+   107→}) {
+   108→  return (
+   109→    <motion.div
+   110→      initial={{ opacity: 0, y: 12 }}
+   111→      animate={{ opacity: 1, y: 0 }}
+   112→      transition={{ delay: index * 0.06, duration: 0.3 }}
+   113→      className="hairline rounded-xl bg-card p-4 lg:p-5"
+   114→    >
+   115→      <div className="flex items-center gap-3">
+   116→        <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg', chipClass)}>
+   117→          <Icon className="size-5" aria-hidden />
+   118→        </span>
+   119→        <p className="micro text-muted-foreground">{label}</p>
+   120→      </div>
+   121→      <p className="tnum mt-3 text-xl font-bold tracking-tight sm:text-2xl lg:text-[1.65rem]">
+   122→        <CountUp value={value} format={format} />
+   123→      </p>
+   124→      <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
+   125→    </motion.div>
+   126→  )
+   127→}
+   128→
+   129→/* ── Payment split ──────────────────────────────────────────────────────── */
+   130→
+   131→function PaymentSplitCard({
+   132→  byMethod,
+   133→  total,
+   134→}: {
+   135→  byMethod: Record<PaymentMethod, MethodSummary>
+   136→  total: number
+   137→}) {
+   138→  const methods: PaymentMethod[] = ['CASH', 'UPI', 'CARD']
+   139→  return (
+   140→    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+   141→      <div className="flex items-center justify-between">
+   142→        <h2 className="text-sm font-semibold">Payment Split</h2>
+   143→        <span className="tnum text-xs text-muted-foreground">{formatINR(total)} total</span>
+   144→      </div>
+   145→      <div className="mt-4 space-y-4">
+   146→        {methods.map((m, i) => {
+   147→          const { amount, count } = byMethod[m]
+   148→          const meta = METHOD_META[m]
+   149→          const Icon = meta.icon
+   150→          const pct = total > 0 ? Math.round((amount / total) * 100) : 0
+   151→          return (
+   152→            <div key={m}>
+   153→              <div className="flex items-center gap-2.5">
+   154→                <span className={cn('flex size-8 items-center justify-center rounded-lg', meta.chipClass)}>
+   155→                  <Icon className="size-4" aria-hidden />
+   156→                </span>
+   157→                <span className="text-sm font-medium">{meta.label}</span>
+   158→                <span className="tnum ml-auto text-sm font-bold">{formatINR(amount)}</span>
+   159→              </div>
+   160→              <div className="mt-1.5 flex items-center gap-2">
+   161→                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+   162→                  <motion.div
+   163→                    initial={{ width: 0 }}
+   164→                    animate={{ width: `${pct}%` }}
+   165→                    transition={{ duration: 0.7, delay: 0.15 + i * 0.1, ease: 'easeOut' }}
+   166→                    className={cn('h-full rounded-full', meta.barClass)}
+   167→                  />
+   168→                </div>
+   169→                <span className="tnum w-[4.5rem] shrink-0 text-right text-[11px] text-muted-foreground">
+   170→                  {count} bills · {pct}%
+   171→                </span>
+   172→              </div>
+   173→            </div>
+   174→          )
+   175→        })}
+   176→      </div>
+   177→    </div>
+   178→  )
+   179→}
+   180→
+   181→/* ── Per-branch breakdown (franchise-wide scope only) ───────────────────── */
+   182→
+   183→function BranchSplitCard({ byBranch }: { byBranch: StatsResponse['byBranch'] }) {
+   184→  const max = byBranch[0]?.revenue || 1
+   185→  return (
+   186→    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+   187→      <div className="flex items-center gap-2">
+   188→        <Building2 className="size-4 text-muted-foreground" aria-hidden />
+   189→        <h2 className="text-sm font-semibold">Branches</h2>
+   190→        <span className="micro ml-auto text-muted-foreground">{byBranch.length} active</span>
+   191→      </div>
+   192→      <ul className="mt-4 space-y-3.5">
+   193→        {byBranch.map((b, i) => {
+   194→          const short = b.name.split('—')[1]?.trim() || b.name
+   195→          const pct = Math.max(4, Math.round((b.revenue / max) * 100))
+   196→          return (
+   197→            <li key={b.branchId}>
+   198→              <div className="flex items-center gap-2.5">
+   199→                <p className="min-w-0 flex-1 truncate text-sm font-medium" title={b.name}>
+   200→                  {short}
+   201→                </p>
+   202→                <p className="tnum shrink-0 text-xs text-muted-foreground">{b.bills} bills</p>
+   203→                <p className="tnum shrink-0 text-sm font-bold">{formatINR(b.revenue)}</p>
+   204→              </div>
+   205→              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+   206→                <motion.div
+   207→                  initial={{ width: 0 }}
+   208→                  animate={{ width: `${pct}%` }}
+   209→                  transition={{ duration: 0.7, delay: 0.1 + i * 0.06, ease: 'easeOut' }}
+   210→                  className="h-full rounded-full"
+   211→                  style={{ background: RANK_BAR_COLORS[i % RANK_BAR_COLORS.length] }}
+   212→                />
+   213→              </div>
+   214→            </li>
+   215→          )
+   216→        })}
+   217→      </ul>
+   218→    </div>
+   219→  )
+   220→}
+   221→
+   222→/* ── Monthly profit trend (6 months) ───────────────────────────────────── */
+   223→
+   224→interface TrendTipProps {
+   225→  active?: boolean
+   226→  label?: string
+   227→  payload?: { dataKey?: string; value?: number }[]
+   228→}
+   229→
+   230→function TrendTooltip({ active, payload, label }: TrendTipProps) {
+   231→  if (!active || !payload?.length) return null
+   232→  const get = (key: string) => payload.find((p) => p.dataKey === key)?.value ?? 0
+   233→  const profit = get('profit')
+   234→  return (
+   235→    <div className="rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-md">
+   236→      <p className="text-xs font-semibold">{label}</p>
+   237→      <p className="tnum mt-1 text-[11px]">
+   238→        <span className="text-muted-foreground">Revenue </span>
+   239→        <span className="font-semibold">{formatINR(get('revenue'))}</span>
+   240→      </p>
+   241→      <p className="tnum text-[11px]">
+   242→        <span className="text-muted-foreground">Expenses </span>
+   243→        <span className="font-semibold">{formatINR(get('expenses'))}</span>
+   244→      </p>
+   245→      <p className="tnum text-[11px]">
+   246→        <span className="text-muted-foreground">Profit </span>
+   247→        <span className={cn('font-bold', profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+   248→          {formatINR(profit)}
+   249→        </span>
+   250→      </p>
+   251→    </div>
+   252→  )
+   253→}
+   254→
+   255→function ProfitTrendCard({ months, loading }: { months: MonthlyStatDTO[]; loading: boolean }) {
+   256→  if (loading) {
+   257→    return (
+   258→      <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+   259→        <Skeleton className="h-4 w-36" />
+   260→        <Skeleton className="mt-3 h-64" />
+   261→      </div>
+   262→    )
+   263→  }
+   264→  const totalProfit = months.reduce((s, m) => s + m.profit, 0)
+   265→  const avgProfit = months.length > 0 ? totalProfit / months.length : 0
+   266→  const axisTick = { fontSize: 11, fill: 'var(--muted-foreground)' }
+   267→  return (
+   268→    <section className="hairline rounded-xl bg-card p-4 lg:p-5" aria-label="Profit trend by month">
+   269→      <div className="flex flex-wrap items-center justify-between gap-2">
+   270→        <div>
+   271→          <h2 className="text-sm font-semibold">Profit trend</h2>
+   272→          <p className="micro text-muted-foreground">last {months.length} months · revenue vs expenses</p>
+   273→        </div>
+   274→        <div className="flex items-center gap-3">
+   275→          <span className="tnum rounded-full border bg-background px-2.5 py-1 text-[11px] font-semibold">
+   276→            Avg profit <span className={avgProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{formatINR(avgProfit)}</span>
+   277→            <span className="text-muted-foreground">/mo</span>
+   278→          </span>
+   279→          <span className="micro flex items-center gap-3 text-muted-foreground">
+   280→            <span className="flex items-center gap-1.5">
+   281→              <span className="size-2.5 rounded-[3px] bg-[var(--chart-1)]" aria-hidden />Revenue
+   282→            </span>
+   283→            <span className="flex items-center gap-1.5">
+   284→              <span className="size-2.5 rounded-[3px] bg-[var(--chart-2)]" aria-hidden />Expenses
+   285→            </span>
+   286→            <span className="flex items-center gap-1.5">
+   287→              <span className="h-0.5 w-3 rounded-full bg-[var(--chart-3)]" aria-hidden />Profit
+   288→            </span>
+   289→          </span>
+   290→        </div>
+   291→      </div>
+   292→      <div className="mt-3 h-64">
+   293→        <ResponsiveContainer width="100%" height="100%">
+   294→          <ComposedChart data={months} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barGap={2}>
+   295→            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+   296→            <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={false} />
+   297→            <YAxis tick={axisTick} tickLine={false} axisLine={false} width={44} tickFormatter={formatAxisINR} />
+   298→            <Tooltip content={<TrendTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.4 }} />
+   299→            <Bar dataKey="revenue" fill="var(--chart-1)" radius={[3, 3, 0, 0]} maxBarSize={22} />
+   300→            <Bar dataKey="expenses" fill="var(--chart-2)" radius={[3, 3, 0, 0]} maxBarSize={22} />
+   301→            <Line
+   302→              type="monotone"
+   303→              dataKey="profit"
+   304→              stroke="var(--chart-3)"
+   305→              strokeWidth={2.5}
+   306→              dot={{ r: 3, fill: 'var(--chart-3)', strokeWidth: 0 }}
+   307→              activeDot={{ r: 5 }}
+   308→            />
+   309→          </ComposedChart>
+   310→        </ResponsiveContainer>
+   311→      </div>
+   312→    </section>
+   313→  )
+   314→}
+   315→
+   316→/* ── Revenue chart ──────────────────────────────────────────────────────── */
+   317→
+   318→interface ChartTipProps {
+   319→  active?: boolean
+   320→  label?: string
+   321→  payload?: { value?: number; payload?: { bills: number } }[]
+   322→}
+   323→
+   324→function ChartTooltip({ active, payload, label }: ChartTipProps) {
+   325→  if (!active || !payload?.length) return null
+   326→  const point = payload[0]
+   327→  return (
+   328→    <div className="rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-md">
+   329→      <p className="text-xs font-semibold">{label}</p>
+   330→      <p className="tnum text-sm font-bold text-rose-600 dark:text-rose-400">
+   331→        {formatINR(point.value ?? 0)}
+   332→      </p>
+   333→      <p className="tnum text-[11px] text-muted-foreground">{point.payload?.bills ?? 0} bills</p>
+   334→    </div>
+   335→  )
+   336→}
+   337→
+   338→function RevenueChart({ daily, useBars }: { daily: StatsResponse['daily']; useBars: boolean }) {
+   339→  const data = useMemo(
+   340→    () => daily.map((d) => ({ ...d, day: dayFmt.format(parseDateKey(d.date)) })),
+   341→    [daily],
+   342→  )
+   343→  const axisTick = { fontSize: 11, fill: 'var(--muted-foreground)' }
+   344→  return (
+   345→    <div className="hairline h-full rounded-xl bg-card p-4 lg:p-5">
+   346→      <div className="flex items-center justify-between">
+   347→        <h2 className="text-sm font-semibold">Revenue</h2>
+   348→        <span className="micro text-muted-foreground">by day</span>
+   349→      </div>
+   350→      <div className="mt-3 h-64">
+   351→        <ResponsiveContainer width="100%" height="100%">
+   352→          {useBars ? (
+   353→            <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+   354→              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+   355→              <XAxis
+   356→                dataKey="day"
+   357→                tick={axisTick}
+   358→                tickLine={false}
+   359→                axisLine={false}
+   360→                interval="preserveStartEnd"
+   361→              />
+   362→              <YAxis tick={axisTick} tickLine={false} axisLine={false} width={38} tickFormatter={formatAxisINR} />
+   363→              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.4 }} />
+   364→              <Bar dataKey="revenue" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+   365→            </BarChart>
+   366→          ) : (
+   367→            <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+   368→              <defs>
+   369→                <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
+   370→                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.22} />
+   371→                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+   372→                </linearGradient>
+   373→              </defs>
+   374→              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+   375→              <XAxis
+   376→                dataKey="day"
+   377→                tick={axisTick}
+   378→                tickLine={false}
+   379→                axisLine={false}
+   380→                interval="preserveStartEnd"
+   381→              />
+   382→              <YAxis tick={axisTick} tickLine={false} axisLine={false} width={38} tickFormatter={formatAxisINR} />
+   383→              <Tooltip content={<ChartTooltip />} />
+   384→              <Area
+   385→                type="monotone"
+   386→                dataKey="revenue"
+   387→                stroke="var(--chart-1)"
+   388→                strokeWidth={2.5}
+   389→                fill="url(#revGradient)"
+   390→                activeDot={{ r: 4, strokeWidth: 0 }}
+   391→              />
+   392→            </AreaChart>
+   393→          )}
+   394→        </ResponsiveContainer>
+   395→      </div>
+   396→    </div>
+   397→  )
+   398→}
+   399→
+   400→/* ── Top services / staff performance ────────────────────────────────────── */
+   401→
+   402→function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
+   403→  const max = top[0]?.revenue || 1
+   404→  return (
+   405→    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+   406→      <h2 className="text-sm font-semibold">Top Services</h2>
+   407→      {top.length === 0 ? (
+   408→        <EmptyState
+   409→          icon={Sparkles}
+   410→          title="No services sold"
+   411→          hint="No billable services in this range yet."
+   412→          className="py-8"
+   413→        />
+   414→      ) : (
+   415→        <ul className="mt-4 space-y-4">
+   416→          {top.map((s, i) => (
+   417→            <li key={s.name}>
+   418→              <div className="flex items-center gap-2.5">
+   419→                <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-xs font-bold text-primary">
+   420→                  {i + 1}
+   421→                </span>
+   422→                <div className="min-w-0 flex-1">
+   423→                  <p className="truncate text-sm font-medium">{s.name}</p>
+   424→                  <p className="tnum text-xs text-muted-foreground">{s.count} sold</p>
+   425→                </div>
+   426→                <p className="tnum text-sm font-bold">{formatINR(s.revenue)}</p>
+   427→              </div>
+   428→              <div className="mt-1.5 ml-[34px] h-1.5 overflow-hidden rounded-full bg-muted">
+   429→                <motion.div
+   430→                  initial={{ width: 0 }}
+   431→                  animate={{ width: `${Math.max(4, Math.round((s.revenue / max) * 100))}%` }}
+   432→                  transition={{ duration: 0.7, delay: 0.1 + i * 0.06, ease: 'easeOut' }}
+   433→                  className="h-full rounded-full"
+   434→                  style={{ background: RANK_BAR_COLORS[i % RANK_BAR_COLORS.length] }}
+   435→                />
+   436→              </div>
+   437→            </li>
+   438→          ))}
+   439→        </ul>
+   440→      )}
+   441→    </div>
+   442→  )
+   443→}
+   444→
+   445→function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
+   446→  const totalCommission = top.reduce((a, s) => a + s.commission, 0)
+   447→  const anyCommission = top.some((s) => s.commissionPct > 0)
+   448→  return (
+   449→    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+   450→      <div className="flex items-center justify-between gap-2">
+   451→        <h2 className="text-sm font-semibold">Staff Performance</h2>
+   452→        {anyCommission && (
+   453→          <Badge className="tnum gap-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
+   454→            <BadgePercent className="size-3" aria-hidden />
+   455→            Commission {formatINR(totalCommission)}
+   456→          </Badge>
+   457→        )}
+   458→      </div>
+   459→      {top.length === 0 ? (
+   460→        <EmptyState
+   461→          icon={UsersRound}
+   462→          title="No staff activity"
+   463→          hint="No bills were created by staff in this range."
+   464→          className="py-8"
+   465→        />
+   466→      ) : (
+   467→        <ul className="mt-4 space-y-4">
+   468→          {top.map((s) => (
+   469→            <li key={s.userId} className="flex items-center gap-3">
+   470→              <span
+   471→                aria-hidden
+   472→                className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-secondary text-xs font-bold text-secondary-foreground"
+   473→              >
+   474→                {initials(s.name)}
+   475→              </span>
+   476→              <div className="min-w-0 flex-1">
+   477→                <p className="truncate text-sm font-medium">{s.name}</p>
+   478→                <p className="tnum text-xs text-muted-foreground">
+   479→                  {s.bills} {s.bills === 1 ? 'bill' : 'bills'}
+   480→                  {s.commissionPct > 0 && (
+   481→                    <span className="text-emerald-600 dark:text-emerald-400">
+   482→                      {' · '}{s.commissionPct}% commission
+   483→                    </span>
+   484→                  )}
+   485→                </p>
+   486→              </div>
+   487→              <div className="shrink-0 text-right">
+   488→                <p className="tnum text-sm font-bold">{formatINR(s.revenue)}</p>
+   489→                {s.commission > 0 && (
+   490→                  <p className="tnum text-xs font-medium text-emerald-600 dark:text-emerald-400">
+   491→                    +{formatINR(s.commission)}
+   492→                  </p>
+   493→                )}
+   494→              </div>
+   495→            </li>
+   496→          ))}
+   497→        </ul>
+   498→      )}
+   499→      {anyCommission && (
+   500→        <p className="mt-4 border-t pt-3 text-[11px] leading-relaxed text-muted-foreground">
+   501→          Commission is calculated on the selected range's revenue at each staff member's current rate.
+   502→        </p>
+   503→      )}
+   504→    </div>
+   505→  )
+   506→}
+   507→
+   508→/* ── Birthday reminders ─────────────────────────────────────────────────── */
+   509→
+   510→const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+   511→
+   512→/** "MM-DD" → "14 Mar" */
+   513→function formatBirthday(mmdd: string): string {
+   514→  const [mm, dd] = mmdd.split('-').map(Number)
+   515→  return `${dd} ${MONTH_SHORT[mm - 1] ?? ''}`.trim()
+   516→}
+   517→
+   518→function BirthdayGreetingButton({ c, tenantName }: { c: BirthdayCustomerDTO; tenantName: string }) {
+   519→  const first = (c.name ?? 'there').split(' ')[0]
+   520→  const queryClient = useQueryClient()
+   521→  const [justWished, setJustWished] = useState(false)
+   522→  const when =
+   523→    c.daysUntil === 0 ? 'today' : c.daysUntil === 1 ? 'tomorrow' : `on ${formatBirthday(c.birthday ?? '')}`
+   524→  const message =
+   525→    c.daysUntil === 0
+   526→      ? `Happy Birthday, ${first}! 🎂 Wishing you a wonderful year ahead. Celebrate with a pampering session at ${tenantName} — a little birthday treat awaits you!`
+   527→      : `Namaste ${first}! 🎉 Your birthday is ${when}! Treat yourself at ${tenantName} — come celebrate with us and enjoy a little birthday surprise. See you soon!`
+   528→
+   529→  // A wish "counts" as sent for two weeks (covers early wishes for the
+   530→  // upcoming birthday) — then the button invites a fresh one.
+   531→  const wishedRecently =
+   532→    justWished ||
+   533→    (c.lastWishAt ? Date.now() - new Date(c.lastWishAt).getTime() < 14 * 24 * 60 * 60 * 1000 : false)
+   534→
+   535→  function wish() {
+   536→    window.open(`https://wa.me/91${c.mobile}?text=${encodeURIComponent(message)}`, '_blank', 'noopener')
+   537→    // Campaign tracking — fire-and-forget, never blocks the WhatsApp tab.
+   538→    setJustWished(true)
+   539→    void apiPut(`/api/customers/${c.id}`, { wishSent: true })
+   540→      .then(() => queryClient.invalidateQueries({ queryKey: ['birthdays'] }))
+   541→      .catch(() => undefined)
+   542→  }
+   543→
+   544→  return (
+   545→    <Button
+   546→      variant="outline"
+   547→      size="sm"
+   548→      onClick={wish}
+   549→      aria-label={
+   550→        wishedRecently
+   551→          ? `Birthday wish already sent to ${c.name ?? c.mobile} — send again on WhatsApp`
+   552→          : `Send birthday wishes to ${c.name ?? c.mobile} on WhatsApp`
+   553→      }
+   554→      className={
+   555→        wishedRecently
+   556→          ? 'h-8 gap-1.5 border-emerald-300/70 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400 dark:hover:bg-emerald-950/70'
+   557→          : 'h-8 gap-1.5 border-emerald-300/70 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70'
+   558→      }
+   559→    >
+   560→      {wishedRecently ? <Check className="size-3.5" aria-hidden /> : <MessageCircle className="size-3.5" aria-hidden />}
+   561→      {wishedRecently ? 'Wished' : 'Wish'}
+   562→    </Button>
+   563→  )
+   564→}
+   565→
+   566→function BirthdaysCard({
+   567→  customers,
+   568→  loading,
+   569→  tenantName,
+   570→  onManage,
+   571→}: {
+   572→  customers: BirthdayCustomerDTO[]
+   573→  loading: boolean
+   574→  tenantName: string
+   575→  onManage: () => void
+   576→}) {
+   577→  return (
+   578→    <section className="hairline overflow-hidden rounded-xl bg-card" aria-label="Upcoming birthdays">
+   579→      <header className="flex items-center gap-2.5 border-b bg-muted/40 px-4 py-3">
+   580→        <span className="flex size-8 items-center justify-center rounded-lg border border-rose-200/70 bg-rose-50 text-rose-600 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+   581→          <Cake className="size-4" aria-hidden />
+   582→        </span>
+   583→        <div className="min-w-0 flex-1">
+   584→          <h3 className="text-[15px] font-bold tracking-tight">Birthdays this week</h3>
+   585→          <p className="text-xs text-muted-foreground">
+   586→            {customers.length > 0
+   587→              ? `${customers.length} customer${customers.length === 1 ? '' : 's'} celebrating — send them a wish, win the visit.`
+   588→              : 'No birthdays in the next 7 days.'}
+   589→          </p>
+   590→        </div>
+   591→        <Button variant="ghost" size="sm" className="h-8 gap-1 text-muted-foreground" onClick={onManage}>
+   592→          Customers
+   593→          <ArrowRight className="size-3.5" aria-hidden />
+   594→        </Button>
+   595→      </header>
+   596→
+   597→      {loading ? (
+   598→        <div className="space-y-2 p-4">
+   599→          {Array.from({ length: 2 }).map((_, i) => (
+   600→            <Skeleton key={i} className="h-12 rounded-lg" />
+   601→          ))}
+   602→        </div>
+   603→      ) : customers.length === 0 ? (
+   604→        <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+   605→          Add birthdays from the Customers view to get reminder lists here. 🎈
+   606→        </p>
+   607→      ) : (
+   608→        <ul className="max-h-64 divide-y overflow-y-auto">
+   609→          {customers.map((c, i) => (
+   610→            <motion.li
+   611→              key={c.id}
+   612→              initial={{ opacity: 0, x: -6 }}
+   613→              animate={{ opacity: 1, x: 0 }}
+   614→              transition={{ delay: i * 0.04, duration: 0.18 }}
+   615→              className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40"
+   616→            >
+   617→              <span
+   618→                className={cn(
+   619→                  'flex size-10 shrink-0 flex-col items-center justify-center rounded-lg border text-[10px] font-bold leading-none',
+   620→                  c.daysUntil === 0
+   621→                    ? 'border-rose-300/70 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+   622→                    : 'bg-background text-muted-foreground',
+   623→                )}
+   624→              >
+   625→                <span className="tnum text-[13px]">{c.birthday?.slice(3)}</span>
+   626→                <span className="micro">{c.birthday ? MONTH_SHORT[Number(c.birthday.slice(0, 2)) - 1] : ''}</span>
+   627→              </span>
+   628→              <div className="min-w-0 flex-1">
+   629→                <p className="truncate text-sm font-semibold">
+   630→                  {c.name ?? '—'}
+   631→                  {c.daysUntil === 0 && (
+   632→                    <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+   633→                      TODAY 🎉
+   634→                    </span>
+   635→                  )}
+   636→                </p>
+   637→                <p className="tnum truncate text-[11px] text-muted-foreground">
+   638→                  +91 {c.mobile}
+   639→                  {c.daysUntil > 0 && ` · in ${c.daysUntil}d`}
+   640→                  {c.homeBranchName ? ` · ${c.homeBranchName.split('—')[1]?.trim() || c.homeBranchName}` : ''}
+   641→                </p>
+   642→              </div>
+   643→              <BirthdayGreetingButton c={c} tenantName={tenantName} />
+   644→            </motion.li>
+   645→          ))}
+   646→        </ul>
+   647→      )}
+   648→    </section>
+   649→  )
+   650→}
+   651→
+   652→/* ── Recent bills ───────────────────────────────────────────────────────── */
+   653→
+   654→function RecentBillsCard({
+   655→  bills,
+   656→  loading,
+   657→  showBranch,
+   658→  onViewAll,
+   659→}: {
+   660→  bills: TransactionDTO[]
+   661→  loading: boolean
+   662→  showBranch: boolean
+   663→  onViewAll: () => void
+   664→}) {
+   665→  return (
+   666→    <div className="hairline mt-4 rounded-xl bg-card shadow-sm">
+   667→      <div className="flex items-center justify-between px-4 py-3.5 lg:px-5">
+   668→        <h2 className="text-sm font-semibold">Recent Bills</h2>
+   669→        <Button variant="ghost" size="sm" onClick={onViewAll}>
+   670→          View all
+   671→          <ArrowRight aria-hidden />
+   672→        </Button>
+   673→      </div>
+   674→      <div className="divide-y border-t">
+   675→        {loading ? (
+   676→          Array.from({ length: 5 }).map((_, i) => (
+   677→            <div key={i} className="flex items-center gap-3 px-4 py-3 lg:px-5">
+   678→              <Skeleton className="h-4 w-14 shrink-0" />
+   679→              <Skeleton className="h-4 flex-1" />
+   680→              <Skeleton className="h-5 w-14 shrink-0" />
+   681→            </div>
+   682→          ))
+   683→        ) : bills.length === 0 ? (
+   684→          <EmptyState
+   685→            icon={ReceiptText}
+   686→            title="No bills in this range"
+   687→            hint="Create a bill from the Billing tab and it will show up here."
+   688→          />
+   689→        ) : (
+   690→          bills.map((t) => (
+   691→            <div
+   692→              key={t.id}
+   693→              className={cn('flex items-center gap-3 px-4 py-2.5 lg:px-5', t.status === 'VOIDED' && 'opacity-60')}
+   694→            >
+   695→              <p className="tnum w-[4.6rem] shrink-0 text-sm font-semibold">{t.billNo}</p>
+   696→              {showBranch && (
+   697→                <p className="hidden w-24 shrink-0 truncate text-xs text-muted-foreground md:block" title={t.branchName}>
+   698→                  {t.branchName.split('—')[1]?.trim() || t.branchName}
+   699→                </p>
+   700→              )}
+   701→              <p className="hidden w-14 shrink-0 text-xs text-muted-foreground sm:block">
+   702→                {formatTime(t.createdAt)}
+   703→              </p>
+   704→              <p className="min-w-0 flex-1 truncate text-sm">
+   705→                {t.customerName || t.customerMobile || (
+   706→                  <span className="italic text-muted-foreground">Walk-in</span>
+   707→                )}
+   708→              </p>
+   709→              <div className="flex shrink-0 items-center gap-1.5">
+   710→                <MethodBadge method={t.paymentMethod} />
+   711→                {t.status === 'VOIDED' && (
+   712→                  <Badge className="border-transparent bg-red-100 text-[10px] text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-950">
+   713→                    Voided
+   714→                  </Badge>
+   715→                )}
+   716→              </div>
+   717→              <p
+   718→                className={cn(
+   719→                  'tnum w-20 shrink-0 text-right text-sm font-bold',
+   720→                  t.status === 'VOIDED' && 'text-muted-foreground line-through',
+   721→                )}
+   722→              >
+   723→                {formatINR(t.total)}
+   724→              </p>
+   725→            </div>
+   726→          ))
+   727→        )}
+   728→      </div>
+   729→    </div>
+   730→  )
+   731→}
+   732→
+   733→/* ── P&L strip: revenue − expenses = net profit ─────────────────────────── */
+   734→
+   735→function ProfitStrip({
+   736→  revenue,
+   737→  expenses,
+   738→  onManageExpenses,
+   739→}: {
+   740→  revenue: number
+   741→  expenses: { total: number; count: number; byCategory: Record<string, { amount: number; count: number }> }
+   742→  onManageExpenses: () => void
+   743→}) {
+   744→  const profit = round2(revenue - expenses.total)
+   745→  const margin = revenue > 0 ? Math.round((profit / revenue) * 100) : 0
+   746→  const cats = Object.entries(expenses.byCategory).sort((a, b) => b[1].amount - a[1].amount).slice(0, 4)
+   747→  return (
+   748→    <motion.div
+   749→      initial={{ opacity: 0, y: 10 }}
+   750→      animate={{ opacity: 1, y: 0 }}
+   751→      transition={{ delay: 0.1, duration: 0.3 }}
+   752→      className="hairline mt-4 rounded-xl bg-card p-4 lg:p-5"
+   753→    >
+   754→      <div className="flex flex-wrap items-center justify-between gap-3">
+   755→        <h2 className="flex items-center gap-2 text-sm font-semibold">
+   756→          <TrendingUp className="size-4 text-primary" aria-hidden />
+   757→          Profit & Loss
+   758→        </h2>
+   759→        <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={onManageExpenses}>
+   760→          <ReceiptText className="size-3.5" aria-hidden />
+   761→          Manage Expenses
+   762→        </Button>
+   763→      </div>
+   764→      <div className="mt-4 grid grid-cols-3 items-center gap-2 sm:gap-4">
+   765→        <div>
+   766→          <p className="micro text-muted-foreground">Revenue</p>
+   767→          <p className="tnum mt-0.5 text-base font-bold sm:text-xl">{formatINR(revenue)}</p>
+   768→        </div>
+   769→        <div className="text-center">
+   770→          <p className="micro text-muted-foreground">Expenses</p>
+   771→          <p className="tnum mt-0.5 text-base font-bold text-rose-600 sm:text-xl dark:text-rose-400">
+   772→            −{formatINR(expenses.total)}
+   773→          </p>
+   774→        </div>
+   775→        <div className="text-right">
+   776→          <p className="micro text-muted-foreground">Net Profit</p>
+   777→          <p
+   778→            className={`tnum mt-0.5 text-base font-bold sm:text-xl ${
+   779→              profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'
+   780→            }`}
+   781→          >
+   782→            {formatINR(profit)}
+   783→          </p>
+   784→        </div>
+   785→      </div>
+   786→      {/* Expense share of revenue bar */}
+   787→      <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+   788→        {expenses.total > 0 && revenue > 0 && (
+   789→          <div
+   790→            className="h-full bg-rose-500/70"
+   791→            style={{ width: `${Math.min(96, Math.round((expenses.total / revenue) * 100))}%` }}
+   792→          />
+   793→        )}
+   794→      </div>
+   795→      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+   796→        <span>
+   797→          Margin:{' '}
+   798→          <span className={`tnum font-bold ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
+   799→            {margin}%
+   800→          </span>
+   801→        </span>
+   802→        {cats.map(([cat, v]) => (
+   803→          <span key={cat} className="tnum flex items-center gap-1">
+   804→            <span className="size-1.5 rounded-full bg-rose-500/60" aria-hidden />
+   805→            {cat.charAt(0) + cat.slice(1).toLowerCase()} {formatINR(v.amount)}
+   806→          </span>
+   807→        ))}
+   808→        {expenses.count === 0 && (
+   809→          <span className="italic">
+   810→            No expenses logged yet — add rent, supplies & salaries for a true profit line.
+   811→          </span>
+   812→        )}
+   813→      </div>
+   814→    </motion.div>
+   815→  )
+   816→}
+   817→
+   818→/* ── View ──────────────────────────────────────────────────────────────── */
+   819→
+   820→export default function DashboardView() {
+   821→  const setView = useAppStore((s) => s.setView)
+   822→  const user = useAppStore((s) => s.user)
+   823→  const scopeBranches = useAppStore((s) => s.branches)
+   824→  const [range, setRange] = useState<DateRange>(() => computePreset('7d'))
+   825→  /** null = whole franchise; otherwise a branchId from scopeBranches. */
+   826→  const [branchScope, setBranchScope] = useState<string | null>(null)
+   827→
+   828→  const scopeParam = branchScope ? `&branchId=${branchScope}` : ''
+   829→  const statsQ = useQuery({
+   830→    queryKey: ['stats', range.from, range.to, branchScope ?? 'all'],
+   831→    queryFn: () => apiGet<StatsResponse>(`/api/stats?from=${range.from}&to=${range.to}${scopeParam}`),
+   832→  })
+   833→  const branchQ = useQuery({
+   834→    queryKey: ['branch'],
+   835→    queryFn: () => apiGet<{ branch: BranchProfileDTO }>('/api/branch'),
+   836→  })
+   837→  const recentQ = useQuery({
+   838→    queryKey: ['recent-bills', range.from, range.to, branchScope ?? 'all'],
+   839→    queryFn: () =>
+   840→      apiGet<TransactionsResponse>(
+   841→        `/api/transactions?from=${range.from}&to=${range.to}${scopeParam}&page=1&limit=5`,
+   842→      ),
+   843→  })
+   844→  const birthdaysQ = useQuery({
+   845→    queryKey: ['birthdays'],
+   846→    queryFn: () => apiGet<{ customers: BirthdayCustomerDTO[] }>('/api/customers?birthdaysWithin=7'),
+   847→  })
+   848→  const monthlyQ = useQuery({
+   849→    queryKey: ['stats-monthly', branchScope ?? 'all'],
+   850→    queryFn: () => apiGet<MonthlyStatsResponse>(`/api/stats/monthly?months=6${scopeParam}`),
+   851→  })
+   852→  const hoursQ = useQuery({
+   853→    queryKey: ['stats-hours', range.from, range.to, branchScope ?? 'all'],
+   854→    queryFn: () => apiGet<HoursStatsResponse>(`/api/stats/hours?from=${range.from}&to=${range.to}${scopeParam}`),
+   855→  })
+   856→
+   857→  const rangeDays = useMemo(
+   858→    () => Math.round((parseDateKey(range.to).getTime() - parseDateKey(range.from).getTime()) / DAY_MS) + 1,
+   859→    [range.from, range.to],
+   860→  )
+   861→
+   862→  const preset = detectPreset(range)
+   863→  const rangeLabel =
+   864→    preset === 'custom'
+   865→      ? `${formatDate(`${range.from}T00:00:00`)} – ${formatDate(`${range.to}T00:00:00`)}`
+   866→      : (PRESET_LABEL[preset] ?? 'Range')
+   867→
+   868→  const scopeName = branchScope
+   869→    ? scopeBranches.find((b) => b.id === branchScope)?.name
+   870→    : 'All branches'
+   871→  const scopeShort = scopeName === 'All branches' ? 'All branches' : (scopeName?.split('—')[1]?.trim() || scopeName)
+   872→
+   873→  /** Report branding context — branch-scoped or franchise-wide. */
+   874→  const reportCtx: ReportContext = branchScope
+   875→    ? {
+   876→        name: scopeName ?? 'SaloonX',
+   877→        logo: branchQ.data?.branch.logo ?? user?.tenantLogo ?? null,
+   878→        tenantName: user?.tenantName ?? null,
+   879→      }
+   880→    : {
+   881→        name: user?.tenantName ?? 'SaloonX',
+   882→        logo: user?.tenantLogo ?? null,
+   883→        tenantName: user?.tenantName ?? null,
+   884→      }
+   885→
+   886→  /**
+   887→   * Share the range summary as a PDF REPORT — never plain text.
+   888→   * Mobile: the PDF goes to the native share sheet (Web Share L2).
+   889→   * Desktop: the PDF downloads + a short note can be pasted anywhere.
+   890→   */
+   891→  const shareReport = () => {
+   892→    const s = statsQ.data
+   893→    if (!s) return
+   894→    const file = summaryReportFile(s, reportCtx, rangeLabel)
+   895→    if (canShareFiles(file) && typeof navigator.share === 'function') {
+   896→      void navigator
+   897→        .share({
+   898→          files: [file],
+   899→          title: `Business Summary — ${scopeShort}`,
+   900→          text: `${reportCtx.name} · ${rangeLabel} report`,
+   901→        })
+   902→        .catch(() => undefined) // user dismissed the sheet — not an error
+   903→      return
+   904→    }
+   905→    downloadSummaryReportPdf(s, reportCtx, rangeLabel)
+   906→    toast.success('Summary report downloaded', {
+   907→      description: `${scopeShort} · ${rangeLabel}`,
+   908→    })
+   909→  }
+   910→
+   911→  /** Quick WhatsApp note to the owner (report PDF travels via the Share button). */
+   912→  const whatsappNote = () => {
+   913→    const s = statsQ.data
+   914→    if (!s) return
+   915→    const ownerMobile = branchQ.data?.branch.ownerMobile?.replace(/\D/g, '')
+   916→    const lines = [
+   917→      `*${reportCtx.name} — ${rangeLabel}*`,
+   918→      `Revenue: ${formatINR(s.totalRevenue)} · ${s.totalBills} bills`,
+   919→      `Cash ${formatINR(s.byMethod.CASH.amount)} · UPI ${formatINR(s.byMethod.UPI.amount)} · Card ${formatINR(s.byMethod.CARD.amount)}`,
+   920→      `New customers: ${s.newCustomers} · Returning: ${s.returningBills}`,
+   921→    ]
+   922→    if (s.expenses.total > 0) {
+   923→      lines.push(`Expenses: ${formatINR(s.expenses.total)} · *Net profit: ${formatINR(s.totalRevenue - s.expenses.total)}*`)
+   924→    }
+   925→    lines.push('Full PDF report follows 📄')
+   926→    window.open(
+   927→      ownerMobile && ownerMobile.length === 10
+   928→        ? `https://wa.me/91${ownerMobile}?text=${encodeURIComponent(lines.join('\n'))}`
+   929→        : `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`,
+   930→      '_blank',
+   931→    )
+   932→  }
+   933→
+   934→  return (
+   935→    <div className="p-4 pb-24 lg:p-6 lg:pb-6">
+   936→      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+   937→        <div>
+   938→          <h1 className="text-xl font-bold tracking-tight lg:text-2xl">Dashboard</h1>
+   939→          <p className="tnum mt-0.5 text-sm text-muted-foreground">
+   940→            {rangeLabel} · {scopeShort}
+   941→            {statsQ.data ? ` · ${statsQ.data.totalBills} bills` : ''}
+   942→          </p>
+   943→        </div>
+   944→        <div className="flex flex-wrap items-center gap-2">
+   945→          <RangePicker value={range} onChange={setRange} />
+   946→          <Button
+   947→            size="sm"
+   948→            disabled={!statsQ.data}
+   949→            onClick={shareReport}
+   950→            className="h-10 gap-1.5"
+   951→            title="Share the business summary as a PDF report"
+   952→          >
+   953→            <FileText className="size-4" aria-hidden />
+   954→            Share Report
+   955→          </Button>
+   956→          <Button
+   957→            size="sm"
+   958→            variant="outline"
+   959→            disabled={!statsQ.data}
+   960→            onClick={whatsappNote}
+   961→            className="h-10 gap-1.5 text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
+   962→            title="Send a short note to the owner on WhatsApp"
+   963→          >
+   964→            <MessageCircle className="size-4" aria-hidden />
+   965→            WhatsApp
+   966→          </Button>
+   967→        </div>
+   968→      </div>
+   969→
+   970→      {/* Branch scope chips — franchise admins compare branches at a glance */}
+   971→      {scopeBranches.length > 1 && (
+   972→        <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Branch scope">
+   973→          <button
+   974→            type="button"
+   975→            onClick={() => setBranchScope(null)}
+   976→            aria-pressed={branchScope === null}
+   977→            className={cn(
+   978→              'h-8 shrink-0 rounded-full border px-3 text-xs font-semibold whitespace-nowrap transition-colors',
+   979→              branchScope === null
+   980→                ? 'border-primary bg-primary text-primary-foreground'
+   981→                : 'bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
+   982→            )}
+   983→          >
+   984→            All branches
+   985→          </button>
+   986→          {scopeBranches.map((b) => {
+   987→            const active = branchScope === b.id
+   988→            const short = b.name.split('—')[1]?.trim() || b.name
+   989→            return (
+   990→              <button
+   991→                key={b.id}
+   992→                type="button"
+   993→                onClick={() => setBranchScope(b.id)}
+   994→                aria-pressed={active}
+   995→                title={b.name}
+   996→                className={cn(
+   997→                  'h-8 max-w-40 shrink-0 truncate rounded-full border px-3 text-xs font-semibold whitespace-nowrap transition-colors',
+   998→                  active
+   999→                    ? 'border-primary bg-primary text-primary-foreground'
+  1000→                    : 'bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
+  1001→                )}
+  1002→              >
+  1003→                {short}
+  1004→              </button>
+  1005→            )
+  1006→          })}
+  1007→        </div>
+  1008→      )}
+  1009→
+  1010→      {statsQ.isError ? (
+  1011→        <div className="hairline mt-6 rounded-xl bg-card">
+  1012→          <EmptyState
+  1013→            icon={AlertTriangle}
+  1014→            title="Could not load the dashboard"
+  1015→            hint={(statsQ.error as Error).message}
+  1016→          />
+  1017→          <div className="flex justify-center pb-6">
+  1018→            <Button variant="outline" onClick={() => void statsQ.refetch()}>
+  1019→              Try again
+  1020→            </Button>
+  1021→          </div>
+  1022→        </div>
+  1023→      ) : statsQ.isPending ? (
+  1024→        <div className="mt-4 space-y-4 lg:mt-6 lg:space-y-6">
+  1025→          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+  1026→            {Array.from({ length: 4 }).map((_, i) => (
+  1027→              <Skeleton key={i} className="h-[7.5rem] rounded-xl" />
+  1028→            ))}
+  1029→          </div>
+  1030→          <div className="grid gap-4 lg:grid-cols-3">
+  1031→            <Skeleton className="h-80 rounded-xl lg:col-span-2" />
+  1032→            <Skeleton className="h-80 rounded-xl" />
+  1033→          </div>
+  1034→          <Skeleton className="h-40 rounded-xl" />
+  1035→        </div>
+  1036→      ) : (
+  1037→        <div className="mt-4 space-y-4 lg:mt-6 lg:space-y-6">
+  1038→          {/* KPI cards */}
+  1039→          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+  1040→            <KpiCard
+  1041→              index={0}
+  1042→              label="Revenue"
+  1043→              sub={`${statsQ.data.totalBills} bills · avg ${formatINR(statsQ.data.avgBill)}`}
+  1044→              value={statsQ.data.totalRevenue}
+  1045→              format={formatINR}
+  1046→              icon={ReceiptText}
+  1047→              chipClass="bg-primary/10 text-primary"
+  1048→            />
+  1049→            <KpiCard
+  1050→              index={1}
+  1051→              label="Bills"
+  1052→              sub={`${statsQ.data.returningBills} returning · ${statsQ.data.newCustomers} new customers`}
+  1053→              value={statsQ.data.totalBills}
+  1054→              format={formatCount}
+  1055→              icon={TrendingUp}
+  1056→              chipClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+  1057→            />
+  1058→            <KpiCard
+  1059→              index={2}
+  1060→              label="New customers"
+  1061→              sub="first-ever visits in range"
+  1062→              value={statsQ.data.newCustomers}
+  1063→              format={formatCount}
+  1064→              icon={UsersRound}
+  1065→              chipClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+  1066→            />
+  1067→            <KpiCard
+  1068→              index={3}
+  1069→              label="Avg bill"
+  1070→              sub={`over ${statsQ.data.totalBills} bills`}
+  1071→              value={statsQ.data.avgBill}
+  1072→              format={formatINR}
+  1073→              icon={Sparkles}
+  1074→              chipClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+  1075→            />
+  1076→          </div>
+  1077→
+  1078→          {/* Charts + payment split (+ branch split when franchise-wide) */}
+  1079→          <div className="grid gap-4 lg:grid-cols-3">
+  1080→            <div className="lg:col-span-2">
+  1081→              <RevenueChart daily={statsQ.data.daily} useBars={rangeDays <= 2} />
+  1082→            </div>
+  1083→            <PaymentSplitCard byMethod={statsQ.data.byMethod} total={statsQ.data.totalRevenue} />
+  1084→          </div>
+  1085→
+  1086→          {/* Monthly profit trend — revenue vs expenses vs profit */}
+  1087→          <ProfitTrendCard
+  1088→            months={monthlyQ.data?.months ?? []}
+  1089→            loading={monthlyQ.isLoading}
+  1090→          />
+  1091→
+  1092→          {/* Business-hours heatmap — staffing planner */}
+  1093→          <BusyHoursCard data={hoursQ.data} loading={hoursQ.isLoading} rangeLabel={rangeLabel} />
+  1094→
+  1095→          {/* Per-branch breakdown — only meaningful across the whole franchise */}
+  1096→          {!branchScope && statsQ.data.byBranch.length > 0 && (
+  1097→            <BranchSplitCard byBranch={statsQ.data.byBranch} />
+  1098→          )}
+  1099→
+  1100→          {/* Top services + staff */}
+  1101→          <div className="grid gap-4 lg:grid-cols-2">
+  1102→            <TopServicesCard top={statsQ.data.topServices} />
+  1103→            <StaffPerformanceCard top={statsQ.data.topStaff} />
+  1104→          </div>
+  1105→
+  1106→          {/* P&L */}
+  1107→          <ProfitStrip
+  1108→            revenue={statsQ.data.totalRevenue}
+  1109→            expenses={statsQ.data.expenses}
+  1110→            onManageExpenses={() => setView('expenses')}
+  1111→          />
+  1112→
+  1113→          {/* Birthday reminders */}
+  1114→          <BirthdaysCard
+  1115→            customers={birthdaysQ.data?.customers ?? []}
+  1116→            loading={birthdaysQ.isLoading}
+  1117→            tenantName={user?.tenantName ?? 'the salon'}
+  1118→            onManage={() => setView('customers')}
+  1119→          />
+  1120→
+  1121→          {/* Recent bills */}
+  1122→          <RecentBillsCard
+  1123→            bills={recentQ.data?.data ?? []}
+  1124→            loading={recentQ.isLoading}
+  1125→            showBranch={!branchScope && scopeBranches.length > 1}
+  1126→            onViewAll={() => setView('transactions')}
+  1127→          />
+  1128→        </div>
+  1129→      )}
+  1130→    </div>
+  1131→  )
+  1132→}
+  1133→

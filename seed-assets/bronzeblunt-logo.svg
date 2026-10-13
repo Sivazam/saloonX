@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Blunt & Bronze — bronze leaf with cream comb teeth -->
+  <rect width="192" height="192" rx="46" fill="#1F4B3F"/>
+  <path d="M 96 46 C 124 82 124 118 96 146 C 68 118 68 82 96 46 Z" fill="#B0813F"/>
+  <line x1="82" y1="104" x2="110" y2="104" stroke="#F6EFE7" stroke-width="6" stroke-linecap="round"/>
+  <line x1="82" y1="116" x2="110" y2="116" stroke="#F6EFE7" stroke-width="6" stroke-linecap="round"/>
+  <line x1="84" y1="128" x2="108" y2="128" stroke="#F6EFE7" stroke-width="6" stroke-linecap="round"/>
+</svg>

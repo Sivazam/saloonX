@@ -1,0 +1,264 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-tenant hierarchy: SUPER_ADMIN (developer) → Tenant (franchise) →
+// Branch (per-city outlet) → ADMIN (1+ branches of one franchise) / STAFF.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  logo      String? // base64 data URL (PNG), downscaled to ≤256px
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches   Branch[]
+  users      User[]
+  categories Category[]
+  services   Service[]
+  customers  Customer[]
+  announcements Announcement[]
+}
+
+model Branch {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  name        String
+  city        String?
+  address     String?
+  phone       String?
+  logo        String? // optional per-branch logo override (base64 data URL)
+  upiId       String?
+  upiQrImage  String? // base64 data URL of the branch's printed UPI QR
+  ownerMobile String? // branch owner's WhatsApp (10 digits) for summary reports
+  billPrefix  String  @default("SX") // bill numbers are per-branch: PREFIX-0001
+  billCounter Int     @default(0)
+  /** Branches opened by franchise admins need super-admin approval before they go live. */
+  approved   Boolean   @default(false)
+  approvedAt DateTime?
+  // Branch-level billing settings (GST / loyalty / receipt)
+  gstEnabled     Boolean @default(false)
+  gstPct         Float   @default(18)
+  loyaltyEnabled Boolean @default(true)
+  loyaltyVisits  Int     @default(3)
+  loyaltyDiscountPct Float @default(10)
+  receiptFooter  String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  users             UserBranch[]
+  transactions      Transaction[]
+  serviceOverrides  ServiceOverride[]
+  expenses          Expense[]
+}
+
+model User {
+  id            String     @id @default(cuid())
+  name          String
+  /** Login identity (Firebase Auth, email/password). */
+  email         String     @unique
+  firebaseUid   String?    @unique
+  role          String // "SUPER_ADMIN" | "ADMIN" | "STAFF"
+  tenantId      String? // null only for SUPER_ADMIN (platform level)
+  tenant        Tenant?    @relation(fields: [tenantId], references: [id])
+  /** Staff-facing UI language preference ("en" | "hi") — synced server-side so
+      a user's language follows them across devices. */
+  lang          String?
+  active        Boolean    @default(true)
+  commissionPct Float      @default(0) // % of bill revenue paid out to this staff member
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  sessions      Session[]
+  transactions  Transaction[]
+  branches      UserBranch[]
+  announcementReads AnnouncementRead[]
+}
+
+model UserBranch {
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  @@id([userId, branchId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId  String? // current POS branch context (null for SUPER_ADMIN sessions)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// Franchise-level menu. Branches inherit prices via Service.price unless a
+// ServiceOverride row exists for that branch.
+model Category {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  name      String
+  sortOrder Int       @default(0)
+  services  Service[]
+}
+
+model Service {
+  id          String            @id @default(cuid())
+  tenantId    String
+  tenant      Tenant            @relation(fields: [tenantId], references: [id])
+  name        String
+  price       Float // franchise default price
+  durationMin Int?
+  categoryId  String
+  category    Category          @relation(fields: [categoryId], references: [id])
+  active      Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  items       TransactionItem[]
+  overrides   ServiceOverride[]
+}
+
+// Per-branch deviation from the franchise menu. price/active are null =
+// "inherit the franchise value" (row deleted in practice, but nullable for
+// partial overrides: a branch may override only price or only availability).
+model ServiceOverride {
+  id        String   @id @default(cuid())
+  serviceId String
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  price     Float?
+  active    Boolean?
+
+  @@unique([serviceId, branchId])
+}
+
+model Customer {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  mobile       String
+  name         String?
+  /** Recurring birthday as "MM-DD" (year unknown) — powers reminder lists. */
+  birthday     String?
+  /** When the salon last sent this customer a birthday wish (campaign tracking). */
+  lastWishAt   DateTime?
+  visits       Int           @default(0)
+  totalSpend   Float         @default(0)
+  lastVisitAt  DateTime?
+  createdAt    DateTime      @default(now())
+  transactions Transaction[]
+  branchVisits BranchVisit[]
+
+  @@unique([tenantId, mobile])
+}
+
+// Optional: which branches a customer has visited (per-franchise loyalty is
+// computed from Customer.visits; this is extra colour for the profile page).
+model BranchVisit {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branchId   String
+  branchName String
+  visitedAt  DateTime @default(now())
+
+  @@unique([customerId, branchId])
+}
+
+model Transaction {
+  id             String            @id @default(cuid())
+  billNo         String            @unique
+  tenantId       String
+  branchId       String
+  branch         Branch            @relation(fields: [branchId], references: [id])
+  branchName     String // snapshot
+  customerId     String?
+  customer       Customer?         @relation(fields: [customerId], references: [id])
+  customerMobile String?
+  customerName   String?
+  staffId        String
+  staff          User              @relation(fields: [staffId], references: [id])
+  staffName      String
+  subtotal       Float
+  discountPct    Float             @default(0)
+  discountAmount Float             @default(0)
+  gstPct         Float             @default(0)
+  gstAmount      Float             @default(0)
+  total          Float
+  paymentMethod  String // "CASH" | "UPI" | "CARD"
+  note           String?
+  status         String            @default("COMPLETED") // "COMPLETED" | "VOIDED"
+  /** Idempotency key from the offline bill queue — a retried sync must never
+      double-bill. Same key returns the original transaction. */
+  clientRequestId String? @unique
+  /** When the staff actually took the payment (offline bills sync later with
+      their true local timestamp, not the sync time). */
+  clientCreatedAt DateTime?
+  voidedAt       DateTime?
+  voidedByUserId String?
+  voidReason     String?
+  createdAt      DateTime          @default(now())
+  items          TransactionItem[]
+}
+
+model TransactionItem {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  serviceId     String?
+  service       Service?    @relation(fields: [serviceId], references: [id])
+  serviceName   String
+  price         Float
+  qty           Int
+}
+
+model Expense {
+  id            String   @id @default(cuid())
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id])
+  category      String // "RENT" | "SUPPLIES" | "SALARY" | "UTILITY" | "MARKETING" | "MAINTENANCE" | "OTHER"
+  description   String?
+  amount        Float
+  date          DateTime // the day the expense occurred (owner may log past expenses)
+  createdByName String // snapshot of who logged it
+  createdAt     DateTime @default(now())
+}
+
+// Franchise-level announcements shown in the bell menu (branch approved /
+// paused, welcome, festive notes from the platform). tenantId null =
+// platform-console-only announcement (visible to SUPER_ADMIN).
+model Announcement {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind      String // "BRANCH_APPROVED" | "BRANCH_DECLINED" | "BRANCH_PAUSED" | "WELCOME" | "INFO"
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+  reads     AnnouncementRead[]
+
+  @@index([tenantId, createdAt])
+}
+
+// Per-user read receipts — an announcement without one is "new" for that user.
+model AnnouncementRead {
+  id             String       @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readAt         DateTime     @default(now())
+
+  @@unique([announcementId, userId])
+}
