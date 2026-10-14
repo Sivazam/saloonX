@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import { motion } from "framer-motion"
 import { apiGet } from "@/lib/api-client"
@@ -8,6 +8,7 @@ import type { MeResponse } from "@/lib/types"
 import { useAppStore } from "@/store/use-app-store"
 import { LoginView } from "@/components/auth/login-view"
 import { AppShell } from "@/components/shell/app-shell"
+import { SalonMenuApp } from "@/components/menu/salon-menu-app"
 
 function Splash() {
   return (
@@ -41,7 +42,21 @@ export default function Page() {
   const hydrated = useAppStore((s) => s.hydrated)
   const user = useAppStore((s) => s.user)
 
+  // Public QR menu — `/?menu=<slug>` renders the customer-facing salon menu,
+  // completely bypassing staff auth (guests scan the poster at the salon).
+  const [menuSlug, setMenuSlug] = useState<string | null>(null)
+
   useEffect(() => {
+    const slug = new URLSearchParams(window.location.search).get("menu")
+    if (slug) {
+      // Deferred to a microtask so it lands after hydration commits — the
+      // same async pattern as the /me fetch below.
+      Promise.resolve().then(() => setMenuSlug(slug))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (menuSlug) return // a public menu visitor never needs the staff session
     let cancelled = false
     apiGet<MeResponse>("/api/auth/me")
       .then((res) => {
@@ -56,7 +71,9 @@ export default function Page() {
     return () => {
       cancelled = true
     }
-  }, [setSession, setHydrated])
+  }, [setSession, setHydrated, menuSlug])
+
+  if (menuSlug) return <SalonMenuApp slug={menuSlug} />
 
   return <>{!hydrated ? <Splash /> : user ? <AppShell /> : <LoginView />}</>
 }

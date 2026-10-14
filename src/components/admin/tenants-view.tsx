@@ -403,6 +403,23 @@ export default function TenantsView() {
           </div>
 
           {/* ── Branch approvals queue ── */}
+          {(platform?.pendingBranches?.length ?? 0) === 0 && !tenantsQ.isPending && (
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="mt-4 flex items-center gap-3 rounded-xl border bg-card px-4 py-3.5 text-sm text-muted-foreground"
+              aria-label="No branches awaiting approval"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-secondary text-emerald-600">
+                <Clock3 className="size-4" aria-hidden />
+              </span>
+              <p>
+                <span className="font-semibold text-foreground">No pending approvals.</span>{' '}
+                New branches opened by franchise admins land here for review.
+              </p>
+            </motion.section>
+          )}
           {(platform?.pendingBranches?.length ?? 0) > 0 && (
             <motion.section
               initial={{ opacity: 0, y: 8 }}

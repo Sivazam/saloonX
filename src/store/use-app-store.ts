@@ -13,6 +13,7 @@ export type View =
   | 'customers'
   | 'settings'
   | 'branches'
+  | 'qrmenu'
   | 'tenants'
 
 export interface CartItem {

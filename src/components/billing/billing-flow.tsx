@@ -58,6 +58,7 @@ export default function BillingFlow() {
   const [recommendation, setRecommendation] =
     useState<LookupResponse['recommendation']>(null)
   const [lastVisit, setLastVisit] = useState<LookupResponse['lastVisit']>(null)
+  const [menuOffer, setMenuOffer] = useState<LookupResponse['menuOffer']>(null)
   const [lookupLoading, setLookupLoading] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(null)
   const inflight = useRef(false)
@@ -83,6 +84,7 @@ export default function BillingFlow() {
       setCustomer(res.customer)
       setRecommendation(res.recommendation)
       setLastVisit(res.lastVisit)
+      setMenuOffer(res.menuOffer)
       setFetchedMobile(mobile)
     } catch (e) {
       setLookupError(e instanceof Error ? e.message : 'Lookup failed')
@@ -131,6 +133,13 @@ export default function BillingFlow() {
   const handleLoyaltyDecision = (d: LoyaltyDecision) => {
     setLoyaltyDecision(d)
     setDiscountPct(d === 'applied' && recommendation ? recommendation.discountPct : 0)
+  }
+
+  /** QR-menu signup offer — same single-discount slot as loyalty, amber banner. */
+  const handleApplyMenuOffer = () => {
+    if (!menuOffer) return
+    setLoyaltyDecision('applied')
+    setDiscountPct(menuOffer.pct)
   }
 
   const handleCustomerContinue = (info: CustomerContinueInfo) => {
@@ -418,6 +427,8 @@ export default function BillingFlow() {
                   discountPct={discountPct}
                   loyaltyDecision={loyaltyDecision}
                   onLoyaltyDecision={handleLoyaltyDecision}
+                  menuOffer={menuOffer}
+                  onApplyMenuOffer={handleApplyMenuOffer}
                   onLookup={() => {
                     if (keypad.digits.length !== 10) {
                       toast.error(L.enterFullMobile)

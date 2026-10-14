@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   Delete,
   History,
+  QrCode,
   UserPlus,
   UserRound,
   X,
@@ -37,6 +38,8 @@ interface CustomerStepProps {
   customer: CustomerDTO | null
   recommendation: LookupResponse['recommendation']
   lastVisit: LastVisitDTO | null
+  menuOffer: LookupResponse['menuOffer']
+  onApplyMenuOffer: () => void
   fetchedMobile: string | null
   lookupLoading: boolean
   lookupError: string | null
@@ -124,6 +127,8 @@ export function CustomerStep({
   customer,
   recommendation,
   lastVisit,
+  menuOffer,
+  onApplyMenuOffer,
   fetchedMobile,
   lookupLoading,
   lookupError,
@@ -150,7 +155,7 @@ export function CustomerStep({
     !lookupError
 
   const showBanner = resolved && customer && recommendation?.eligible && loyaltyDecision === 'none'
-  const applied = resolved && recommendation?.eligible && loyaltyDecision === 'applied'
+  const applied = resolved && loyaltyDecision === 'applied' && discountPct > 0
 
   const canContinue = walkIn || resolved
 
@@ -393,9 +398,38 @@ export function CustomerStep({
           ) : null}
         </AnimatePresence>
 
+        {/* QR-menu signup offer — guest registered from the salon's public menu */}
+        <AnimatePresence>
+          {resolved && menuOffer && loyaltyDecision === 'none' && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              className="mt-3 flex items-center gap-3 rounded-2xl border border-amber-500/50 bg-amber-500/10 px-4 py-3"
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                <QrCode className="size-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-amber-800 dark:text-amber-300">{L.menuOfferTitle}</p>
+                <p className="tnum mt-0.5 truncate text-xs text-amber-700/90 dark:text-amber-400/90">
+                  {L.menuOfferCode} <span className="font-bold tracking-[0.15em]">{menuOffer.code}</span> · {L.menuOfferHint}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                className="h-10 shrink-0 bg-amber-600 font-bold text-white hover:bg-amber-600/90"
+                onClick={onApplyMenuOffer}
+              >
+                {L.applyOff.replace('{n}', String(menuOffer.pct))}
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Loyalty applied chip */}
         <AnimatePresence>
-          {applied && recommendation && (
+          {applied && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -404,7 +438,7 @@ export function CustomerStep({
             >
               <p className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-400">
                 <BadgePercent className="size-5" />
-                {recommendation.discountPct}{L.offApplied}
+                {discountPct}{L.offApplied}
               </p>
               <button
                 type="button"

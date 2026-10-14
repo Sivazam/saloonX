@@ -52,6 +52,12 @@ model Branch {
   loyaltyVisits  Int     @default(3)
   loyaltyDiscountPct Float @default(10)
   receiptFooter  String?
+  /** Public QR-menu URL slug — `/?menu=<slug>` opens this branch's customer menu. */
+  menuSlug     String? @unique
+  /** First-visit discount advertised on the QR menu (0 = hide the registration CTA). */
+  menuOfferPct Int     @default(10)
+  /** Optional hero tagline for the QR menu (falls back to a generated line). */
+  menuTagline  String?
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -60,6 +66,7 @@ model Branch {
   transactions      Transaction[]
   serviceOverrides  ServiceOverride[]
   expenses          Expense[]
+  menuLeads         MenuLead[]
 }
 
 model User {
@@ -159,6 +166,7 @@ model Customer {
   createdAt    DateTime      @default(now())
   transactions Transaction[]
   branchVisits BranchVisit[]
+  menuLeads    MenuLead[]
 
   @@unique([tenantId, mobile])
 }
@@ -261,4 +269,24 @@ model AnnouncementRead {
   readAt         DateTime     @default(now())
 
   @@unique([announcementId, userId])
+}
+
+// A customer who registered via the public QR menu to claim a first-visit
+// discount. The code is shown at the counter; it auto-redeems on the first
+// discounted bill (see POST /api/transactions).
+model MenuLead {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  tenantId   String
+  branchId   String
+  branch     Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  mobile     String
+  name       String?
+  pct        Int
+  createdAt  DateTime  @default(now())
+  redeemedAt DateTime?
+
+  @@index([tenantId, mobile])
 }

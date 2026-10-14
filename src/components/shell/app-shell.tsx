@@ -15,6 +15,7 @@ import {
   LogOut,
   Moon,
   Network,
+  QrCode,
   ReceiptText,
   Scissors,
   Settings2,
@@ -57,6 +58,7 @@ const ExpensesView = dynamic(() => import("@/components/admin/expenses-view"), {
 const SettingsView = dynamic(() => import("@/components/admin/settings-view"), { loading: () => <ViewSkeleton /> })
 const BranchesView = dynamic(() => import("@/components/admin/branches-view"), { loading: () => <ViewSkeleton /> })
 const TenantsView = dynamic(() => import("@/components/admin/tenants-view"), { loading: () => <ViewSkeleton /> })
+const QrMenuView = dynamic(() => import("@/components/admin/qr-menu-view"), { loading: () => <ViewSkeleton /> })
 
 interface NavItem {
   view: View
@@ -73,12 +75,13 @@ const ADMIN_NAV: NavItem[] = [
   { view: "staff", label: "Staff", icon: UsersRound },
   { view: "customers", label: "Customers", icon: Contact },
   { view: "branches", label: "Branches", icon: Building2 },
+  { view: "qrmenu", label: "QR Menu", icon: QrCode },
   { view: "settings", label: "Settings", icon: Settings2 },
 ]
 
 const SUPER_ADMIN_NAV: NavItem[] = [{ view: "tenants", label: "Franchises", icon: Network }]
 
-const MOBILE_MORE_VIEWS: View[] = ["expenses", "services", "staff", "customers", "branches", "settings"]
+const MOBILE_MORE_VIEWS: View[] = ["expenses", "services", "staff", "customers", "branches", "qrmenu", "settings"]
 
 function initials(name: string): string {
   return (
@@ -295,6 +298,8 @@ export function AppShell() {
         return <CustomersView />
       case "branches":
         return <BranchesView />
+      case "qrmenu":
+        return <QrMenuView />
       case "tenants":
         return <TenantsView />
       case "settings":

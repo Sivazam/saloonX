@@ -147,6 +147,15 @@ export async function POST(request: Request) {
         create: { customerId: customer.id, branchId: branch.id, branchName: branch.name, visitedAt: new Date() },
         update: {},
       })
+
+      // Any discounted bill redeems the customer's QR-menu signup offer —
+      // the guest showed their code, the salon honoured it.
+      if (discountPct > 0) {
+        await tx.menuLead.updateMany({
+          where: { customerId: customer.id, redeemedAt: null },
+          data: { redeemedAt: new Date() },
+        })
+      }
     }
 
     const transaction = await tx.transaction.create({

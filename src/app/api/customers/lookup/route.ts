@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     where: { tenantId_mobile: { tenantId: branch.tenantId, mobile } },
   })
   if (!customer) {
-    return NextResponse.json({ customer: null, recommendation: null, lastVisit: null })
+    return NextResponse.json({ customer: null, recommendation: null, lastVisit: null, menuOffer: null })
   }
 
   // Last COMPLETED visit with its items — powers the "Last visit" hint at billing,
@@ -33,6 +33,12 @@ export async function GET(request: Request) {
     where: { customerId: customer.id, status: "COMPLETED" },
     orderBy: { createdAt: "desc" },
     include: { items: true },
+  })
+
+  // Unredeemed QR-menu signup offer (franchise-wide — claimed at any branch).
+  const menuLead = await db.menuLead.findFirst({
+    where: { tenantId: branch.tenantId, mobile, redeemedAt: null },
+    orderBy: { createdAt: "desc" },
   })
 
   const lastVisit = lastBill
@@ -54,5 +60,6 @@ export async function GET(request: Request) {
       visits: customer.visits,
     },
     lastVisit,
+    menuOffer: menuLead ? { pct: menuLead.pct, code: menuLead.code } : null,
   })
 }

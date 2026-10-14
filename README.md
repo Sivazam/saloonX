@@ -6,7 +6,7 @@ An ultra-simple, multi-tenant salon billing Progressive Web App built for Indian
 
 ## Highlights
 
-- **POS-style login** — Firebase email + password, then tap your name tile and enter a 4-digit PIN on a big keypad. Nothing to type on the shop floor.
+- **Login** — Firebase email + password, then a one-tap branch picker for multi-branch staff.
 - **3-step billing flow** — services → customer (mobile keypad + returning-customer recognition & festive discount recommendation) → payment (Cash with quick-tender chips & change calculator, UPI QR with amount, Card).
 - **Receipts** — WhatsApp share (PDF), native share, PDF download, print.
 - **Reports** — dashboard with revenue/bills/avg, payment split, trend charts, top services; transactions with filters; CSV & PDF exports; monthly profit trend.
@@ -43,20 +43,24 @@ DATABASE_URL=file:/absolute/path/to/db/custom.db
 
 ## Demo Credentials (after seed)
 
-Login is a 3-step POS-style flow: **Firebase email + password** → **tap your name tile** (branch/user picker) → **4-digit PIN** on a big keypad. No usernames to type on the shop floor.
+Login is **Firebase email + password**, then multi-branch users pick their branch from a tile picker.
 
 Password for **every** account: `saloon123`
 
-| Role | Brand | Email | PIN |
-| --- | --- | --- | --- |
-| Super Admin | Platform Console | `dev@saloonx.example` | `9999` |
-| Admin | Glow & Go | `ravi@glowgo.example` | `1234` |
-| Staff | Glow & Go | `priya@` / `amit@` / `neha@glowgo.example` | `1111` / `2222` / `3333` |
-| Admin | UrbanCuts | `arjun@urbancuts.example` | `4444` |
-| Staff | UrbanCuts | `kabir@` / `dev@urbancuts.example` | `5555` / `7777` |
-| Admin | Blunt & Bronze | `meera@bluntbronze.example` | `6666` |
+| Role | Brand | Email |
+| --- | --- | --- |
+| Super Admin | Platform Console | `dev@saloonx.example` |
+| Admin | Glow & Go | `ravi@glowgo.example` |
+| Staff | Glow & Go | `priya@` / `amit@` / `neha@glowgo.example` |
+| Admin | UrbanCuts | `arjun@urbancuts.example` |
+| Staff | UrbanCuts | `kabir@` / `dev@urbancuts.example` |
+| Admin | Blunt & Bronze | `meera@bluntbronze.example` |
 
-Seed data: 3 brands (+1 pending-approval branch for the platform approval flow), 96 transactions, 16 service price overrides, 30 expenses, 5 months of history, birthday-campaign demo customers. The seed provisions real Firebase Auth accounts (idempotent) and falls back to local-only users if Firebase is unreachable.
+Seed data: 3 brands (+1 pending-approval branch for the platform approval flow), 96+ transactions, 16 service price overrides, 30 expenses, 5 months of history, birthday-campaign demo customers. The seed provisions real Firebase Auth accounts (idempotent) and falls back to local-only users if Firebase is unreachable.
+
+## QR Menu (customer-facing)
+
+Every branch has a public menu at `/?menu=<branch-slug>` (e.g. `glow-and-go-salons-andheri-west`) — the link behind the QR code the admin prints from the **QR Menu** page. Guests who scan it get a mobile-first, Swiggy-style experience: ink hero with the salon brand, live search, category tiles with hand-drawn icons (mustache, scissors, lotus…), a floating category dock, branch-specific prices with strikethrough MRP offers, "most loved" services from real bills, WhatsApp booking, and an optional first-visit discount signup (guest registers name + mobile → coupon code). At billing, entering that mobile shows the offer banner with the code — the discount applies in one tap and redeems itself on the bill.
 
 ## Project Structure
 

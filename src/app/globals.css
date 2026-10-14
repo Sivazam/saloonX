@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,650;0,9..144,800;1,9..144,500&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -8,6 +9,8 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Display serif — public QR menu (Fraunces, with safe fallbacks) */
+  --font-display: "Fraunces", "Georgia", "Times New Roman", serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -188,6 +191,54 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+}
+
+/* ── Public QR menu helpers ───────────────────────────────────────────── */
+
+/* The public menu is a brand page — always its warm paper palette, never the
+   device dark theme. Scope-override the token so ticket notches etc. blend. */
+.menu-root {
+  --background: #faf7f1;
+  --foreground: #1c1917;
+}
+
+/* Floating category dock — scroll without a visible scrollbar */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Warm paper grain for the menu hero (ink panel + faint gold specks) */
+.menu-hero {
+  background:
+    radial-gradient(120% 90% at 80% -10%, oklch(0.45 0.06 60 / 0.35), transparent 55%),
+    radial-gradient(90% 70% at 10% 110%, oklch(0.4 0.05 30 / 0.3), transparent 60%),
+    oklch(0.21 0.012 55);
+}
+
+/* Dashed coupon ticket edge */
+.ticket-notch {
+  position: relative;
+}
+.ticket-notch::before,
+.ticket-notch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: var(--background);
+  transform: translateY(-50%);
+}
+.ticket-notch::before {
+  left: -9px;
+}
+.ticket-notch::after {
+  right: -9px;
 }
 
 /* ── Receipt zigzag edge (decorative, theme-aware) ────────────────────────── */

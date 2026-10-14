@@ -44,6 +44,12 @@ export interface BranchProfileDTO {
   loyaltyVisits: number
   loyaltyDiscountPct: number
   receiptFooter: string | null
+  /** Public QR-menu URL slug — `/?menu=<slug>` opens this branch's customer menu. */
+  menuSlug: string | null
+  /** First-visit discount advertised on the QR menu (0 = registration CTA hidden). */
+  menuOfferPct: number
+  /** Optional hero tagline shown on the QR menu. */
+  menuTagline: string | null
   active: boolean
   /** Live for billing only when approved && active. */
   approved: boolean
@@ -64,6 +70,9 @@ export interface BranchAdminDTO {
   billPrefix: string
   active: boolean
   approved: boolean
+  menuSlug: string | null
+  menuOfferPct: number
+  menuTagline: string | null
   userCount: number
   revenue30d: number
   bills30d: number
@@ -188,6 +197,69 @@ export interface LookupResponse {
     visits: number
   } | null
   lastVisit: LastVisitDTO | null
+  /** Unredeemed QR-menu signup offer for this customer, if any. */
+  menuOffer: { pct: number; code: string } | null
+}
+
+/* ── Public QR menu (no auth) ──────────────────────────────────────────── */
+
+export interface PublicMenuServiceDTO {
+  id: string
+  name: string
+  price: number
+  /** Franchise default price — when it differs from price, the menu shows a
+   *  strikethrough MRP (branch offer). */
+  mrp: number | null
+  durationMin: number | null
+  popular: boolean
+}
+
+export interface PublicMenuCategoryDTO {
+  id: string
+  name: string
+  /** Icon key resolved from the category name (see menu icon map). */
+  icon: string
+  services: PublicMenuServiceDTO[]
+}
+
+export interface PublicMenuResponse {
+  branch: {
+    name: string
+    city: string | null
+    address: string | null
+    phone: string | null
+    logo: string | null
+    tagline: string
+  }
+  tenant: { name: string; logo: string | null }
+  offer: { pct: number } | null
+  categories: PublicMenuCategoryDTO[]
+  stats: { customers: number; bills: number }
+  slug: string
+}
+
+export interface MenuLeadResponse {
+  code: string
+  pct: number
+  name: string | null
+  already: boolean
+}
+
+/** One QR-menu signup row (admin Menu signups panel). */
+export interface MenuLeadRowDTO {
+  id: string
+  code: string
+  name: string | null
+  mobile: string
+  pct: number
+  branchName: string
+  createdAt: string
+  redeemedAt: string | null
+}
+
+export interface MenuLeadsStatsResponse {
+  totals: { claims: number; redeemed: number }
+  recent: MenuLeadRowDTO[]
 }
 
 export interface TransactionItemDTO {

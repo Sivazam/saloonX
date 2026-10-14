@@ -34,6 +34,8 @@ const updateSchema = z.object({
   loyaltyVisits: z.number().int().min(1).max(100).optional(),
   loyaltyDiscountPct: z.number().min(0).max(100).optional(),
   receiptFooter: z.string().trim().max(200).optional().nullable(),
+  menuOfferPct: z.number().int().min(0).max(100).optional(),
+  menuTagline: z.string().trim().max(120).optional().nullable(),
   active: z.boolean().optional(),
   /** SUPER_ADMIN only — approves a branch to go live. */
   approved: z.boolean().optional(),
@@ -110,6 +112,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       ...(d.loyaltyVisits !== undefined ? { loyaltyVisits: d.loyaltyVisits } : {}),
       ...(d.loyaltyDiscountPct !== undefined ? { loyaltyDiscountPct: d.loyaltyDiscountPct } : {}),
       ...(d.receiptFooter !== undefined ? { receiptFooter: d.receiptFooter } : {}),
+      ...(d.menuOfferPct !== undefined ? { menuOfferPct: d.menuOfferPct } : {}),
+      ...(d.menuTagline !== undefined ? { menuTagline: d.menuTagline } : {}),
       ...(d.active !== undefined ? { active: d.active } : {}),
       ...(d.approved !== undefined
         ? { approved: d.approved, approvedAt: d.approved ? new Date() : null }

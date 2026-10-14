@@ -171,6 +171,22 @@ const BRONZE_CATALOG: CatalogSpec = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Public QR-menu slug: tenant + branch locality ("Brand — Locality"), unique
+ *  across the whole platform. Deterministic so reseeds are idempotent. */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+}
+
+function menuSlugFor(tenantName: string, branchName: string, city?: string): string {
+  const locality = branchName.includes("—") ? branchName.split("—").pop()!.trim() : branchName
+  return slugify(`${tenantName}-${locality || city || "salon"}`)
+}
+
 interface SeededService {
   id: string
   name: string
@@ -246,6 +262,9 @@ async function seedTenant(opts: {
         gstEnabled: b.gstEnabled ?? false,
         gstPct: b.gstEnabled ? 18 : 0,
         receiptFooter: b.footer,
+        // Public QR-menu slug + first-visit offer (see /?menu=<slug>).
+        menuSlug: menuSlugFor(opts.name, b.name, b.city),
+        menuOfferPct: 10,
         // Seeded branches are already live — approved by the platform.
         approved: true,
         approvedAt: new Date(),
@@ -743,6 +762,7 @@ async function main() {
         phone: "+91 98765 10004",
         upiId: "glowgo.powai@okhdfcbank",
         billPrefix: "GG4",
+        menuSlug: menuSlugFor("Glow & Go Salons", "Glow & Go — Powai", "Mumbai"),
         approved: false, // ← awaiting super admin approval
       },
     })
