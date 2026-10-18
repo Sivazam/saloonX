@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic"
 /**
  * GET (ADMIN): transactions CSV for the franchise (or one ?branchId=),
  * newest first. Columns include the branch name. Same filters as the
- * Transactions view.
+ * Transactions view (method, staff, free-text search).
  */
 export async function GET(request: Request) {
   const auth = await requireApiUser(["ADMIN"])
@@ -18,14 +18,32 @@ export async function GET(request: Request) {
   const to = dayEnd(params.get("to") ?? new Date())
   const method = params.get("method") ?? ""
   const staffId = params.get("staffId") ?? ""
+  const search = (params.get("search") ?? "").trim()
   const branchIdParam = params.get("branchId") ?? ""
 
   const scope = await adminBranchScope(auth.user, branchIdParam || null)
   if (scope.error) return Response.json({ error: scope.error }, { status: 403 })
   const branchIds = scope.branchIds ?? []
 
+  // Neutralise spreadsheet formula injection: a cell starting with = + - @ or
+  // tab is prefixed with a single quote so Excel/Sheets treats it as text.
+  const esc = (v: string) => {
+    const safe = /^[=+@\t\r]|^\-/.test(v) ? `'${v}` : v
+    return `"${safe.replace(/"/g, '""')}"`
+  }
+
+  // Empty scope (no approved branches) → an empty ledger, never the platform.
+  const cols = [
+    "Bill No", "Branch", "Date", "Time", "Customer Mobile", "Customer Name",
+    "Staff", "Services", "Subtotal", "Discount %", "Discount Amt", "GST Amt", "Total",
+    "Payment Method", "Status",
+  ]
+  if (branchIds.length === 0) {
+    return csvResponse([cols], branchIdParam ? "branch" : "all")
+  }
+
   const where = {
-    ...(branchIds.length ? { branchId: { in: branchIds } } : {}),
+    branchId: { in: branchIds },
     ...(from || to
       ? {
           AND: [
@@ -36,6 +54,15 @@ export async function GET(request: Request) {
       : {}),
     ...(method === "CASH" || method === "UPI" || method === "CARD" ? { paymentMethod: method } : {}),
     ...(staffId ? { staffId } : {}),
+    ...(search
+      ? {
+          OR: [
+            { billNo: { contains: search } },
+            { customerMobile: { contains: search } },
+            { customerName: { contains: search } },
+          ],
+        }
+      : {}),
   }
 
   const rows = await db.transaction.findMany({
@@ -44,14 +71,7 @@ export async function GET(request: Request) {
     include: { items: true },
   })
 
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`
-  const lines = [
-    [
-      "Bill No", "Branch", "Date", "Time", "Customer Mobile", "Customer Name",
-      "Staff", "Services", "Subtotal", "Discount %", "Discount Amt", "GST Amt", "Total",
-      "Payment Method", "Status",
-    ].join(","),
-  ]
+  const lines = [cols]
   for (const t of rows) {
     const services = t.items.map((i) => (i.qty > 1 ? `${i.serviceName} x${i.qty}` : i.serviceName)).join("; ")
     const d = t.createdAt
@@ -64,13 +84,15 @@ export async function GET(request: Request) {
         t.subtotal.toFixed(2), t.discountPct.toFixed(0), t.discountAmount.toFixed(2),
         t.gstAmount.toFixed(2), t.total.toFixed(2), t.paymentMethod, t.status,
       ]
-        .map((c) => esc(String(c)))
-        .join(","),
+        .map((c) => esc(String(c))),
     )
   }
 
-  const csv = "\uFEFF" + lines.join("\r\n")
-  const prefix = branchIdParam ? branchIds[0] : "all"
+  return csvResponse(lines, branchIdParam ? branchIds[0] : "all")
+}
+
+function csvResponse(rows: string[][], prefix: string): Response {
+  const csv = "\uFEFF" + rows.map((r) => r.join(",")).join("\r\n")
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

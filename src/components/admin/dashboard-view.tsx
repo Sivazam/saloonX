@@ -945,6 +945,7 @@ export default function DashboardView() {
         ? `https://wa.me/91${ownerMobile}?text=${encodeURIComponent(lines.join('\n'))}`
         : `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`,
       '_blank',
+      'noopener',
     )
   }
 

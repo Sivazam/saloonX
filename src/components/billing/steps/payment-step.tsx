@@ -60,6 +60,7 @@ export function PaymentStep({
   // QR cache entry keyed by the full UPI URI — setState only happens in the
   // async callbacks, never synchronously in the effect body.
   const [qr, setQr] = useState<{ key: string; url: string | null; failed: boolean } | null>(null)
+  const [qrAttempt, setQrAttempt] = useState(0)
   const qrFor = useRef<string | null>(null)
 
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0)
@@ -75,8 +76,17 @@ export function PaymentStep({
       )}&am=${total.toFixed(2)}&cu=INR`
     : null
   const qrCurrent = qr !== null && qr.key === upiUri ? qr : null
-  const qrLoading = upiUri !== null && (qrCurrent === null || qrCurrent.url === null)
+  // Loading only while there is no resolved state yet — a failure state must
+  // reach the UI (previously a failed QR kept the skeleton up forever).
+  const qrLoading = upiUri !== null && qrCurrent === null
   const qrFailed = qrCurrent?.failed === true
+
+  const retryQr = () => {
+    if (!upiUri) return
+    qrFor.current = null
+    setQr(null) // clears the failed state → skeleton while regenerating
+    setQrAttempt((n) => n + 1) // re-triggers the generation effect
+  }
 
   const openDialog = (method: PaymentMethod) => {
     if (submitting) return
@@ -86,6 +96,7 @@ export function PaymentStep({
   }
 
   // Auto-generate a UPI QR from the branch's UPI ID + this bill's amount.
+  // qrAttempt is a manual-retry trigger (bumped by retryQr).
   useEffect(() => {
     if (dialog !== 'UPI' || branch.upiQrImage || !upiUri) return
     if (qrFor.current === upiUri) return // already generated or generating
@@ -107,9 +118,25 @@ export function PaymentStep({
     return () => {
       cancelled = true
     }
-  }, [dialog, branch.upiQrImage, upiUri])
+  }, [dialog, branch.upiQrImage, upiUri, qrAttempt])
 
   const change = tendered !== null ? round2(tendered - total) : null
+
+  // Quick-tender chips adapt to the bill: the next round numbers above the
+  // total plus common Indian notes that cover it (₹2000 is being withdrawn —
+  // only suggested when nothing smaller covers the bill).
+  const quickTenders = (() => {
+    const options = new Set<number>()
+    for (const step of [10, 50, 100, 200, 500]) {
+      const v = Math.ceil(total / step) * step
+      if (v > total) options.add(v)
+      if (options.size >= 2) break
+    }
+    for (const note of [100, 200, 500, 1000, 2000]) {
+      if (note >= total) options.add(note)
+    }
+    return [...options].sort((a, b) => a - b).slice(0, 4)
+  })()
 
   const methodCard =
     'flex h-28 flex-col items-center justify-center gap-1.5 rounded-xl border-2 bg-card shadow-sm transition-colors hover:border-primary/60 hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50 sm:h-32'
@@ -135,7 +162,7 @@ export function PaymentStep({
 
         <div className="mt-3 space-y-2 border-t border-dashed pt-3 text-sm">
           <div className="flex justify-between text-muted-foreground">
-            <span>Subtotal</span>
+            <span>{L.subtotal}</span>
             <span className="tnum font-semibold text-foreground">
               {formatINR(subtotal)}
             </span>
@@ -306,7 +333,7 @@ export function PaymentStep({
               >
                 {L.exact} {formatINR(total)}
               </button>
-              {[200, 500, 1000, 2000].map((amount) => (
+              {quickTenders.map((amount) => (
                 <button
                   key={amount}
                   type="button"
@@ -327,7 +354,7 @@ export function PaymentStep({
                   setCustomText('')
                 }}
                 className={`h-11 rounded-xl border px-4 text-base font-bold transition-colors ${
-                  tendered !== null && ![total, 200, 500, 1000, 2000].includes(tendered)
+                  tendered !== null && ![total, ...quickTenders].includes(tendered)
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'bg-card hover:bg-accent'
                 }`}
@@ -335,7 +362,7 @@ export function PaymentStep({
                 {L.custom}
               </button>
             </div>
-            {(tendered === null || ![total, 200, 500, 1000, 2000].includes(tendered)) && (
+            {(tendered === null || ![total, ...quickTenders].includes(tendered)) && (
               <Input
                 inputMode="numeric"
                 value={customText}
@@ -420,11 +447,16 @@ export function PaymentStep({
                 <div className="flex w-full flex-col items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-center">
                   <AlertTriangle className="size-6 text-amber-600" />
                   <p className="text-sm font-semibold">
-                    {qrFailed ? "Couldn't generate the QR code" : 'QR code unavailable'}
+                    {qrFailed ? L.qrGenerateFailed : L.qrUnavailable}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Ask customer to pay {formatINR(total)} to {branch.upiId}
+                    {L.askPayUpi.replace('{amount}', formatINR(total)).replace('{id}', branch.upiId)}
                   </p>
+                  {qrFailed && (
+                    <Button size="sm" variant="outline" className="mt-1 h-9" onClick={retryQr}>
+                      {L.retry}
+                    </Button>
+                  )}
                 </div>
               )
             ) : (
@@ -438,7 +470,7 @@ export function PaymentStep({
             )}
             {branch.upiId && !qrLoading && (
               <p className="mt-3 text-sm text-muted-foreground">
-                UPI ID: <span className="font-semibold text-foreground">{branch.upiId}</span>
+                {L.upiIdLabel} <span className="font-semibold text-foreground">{branch.upiId}</span>
               </p>
             )}
           </div>

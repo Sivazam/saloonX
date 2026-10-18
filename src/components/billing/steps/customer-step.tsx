@@ -98,14 +98,22 @@ function LastVisitHint({ lastVisit }: { lastVisit: LastVisitDTO }) {
   )
 }
 
-/** Days until the next "MM-DD" birthday (0 = today). */
+/** Days until the next "MM-DD" birthday (0 = today). Feb 29 birthdays are
+ *  celebrated on Feb 28 in non-leap years instead of rolling into March. */
 function birthdayCountdown(mmdd: string): number {
   const [mm, dd] = mmdd.split('-').map(Number)
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  let next = new Date(now.getFullYear(), mm - 1, dd)
-  if (next < today) next = new Date(now.getFullYear() + 1, mm - 1, dd)
-  return Math.round((next.getTime() - today.getTime()) / 86_400_000)
+  const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+  let y = now.getFullYear()
+  let target = new Date(y, mm - 1, dd)
+  if (mm === 2 && dd === 29 && !isLeap(y)) target = new Date(y, 1, 28)
+  if (target < today) {
+    y += 1
+    target = new Date(y, mm - 1, dd)
+    if (mm === 2 && dd === 29 && !isLeap(y)) target = new Date(y, 1, 28)
+  }
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000)
 }
 
 /** "🎂 Birthday in 3 days" — a warm nudge for the staff to congratulate. */
@@ -233,7 +241,7 @@ export function CustomerStep({
           <motion.button
             type="button"
             whileTap={{ scale: 0.94 }}
-            aria-label="Delete last digit"
+            aria-label={L.deleteDigit}
             className={keypadButton}
             onClick={keypad.backspace}
             disabled={keypad.digits.length === 0}
@@ -442,7 +450,7 @@ export function CustomerStep({
               </p>
               <button
                 type="button"
-                aria-label="Undo discount"
+                aria-label={L.undoDiscount}
                 className="flex size-11 items-center justify-center rounded-xl text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
                 onClick={() => onLoyaltyDecision('none')}
               >

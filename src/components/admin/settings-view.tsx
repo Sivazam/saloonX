@@ -41,13 +41,14 @@ interface BranchSettingsForm {
   upiQrImage: string | null
   gstEnabled: boolean
   gstPct: number
+  gstin: string
   loyaltyEnabled: boolean
   loyaltyVisits: number
   loyaltyDiscountPct: number
   receiptFooter: string
 }
 
-type FieldErrors = Partial<Record<'name' | 'city' | 'gstPct' | 'loyaltyVisits' | 'loyaltyDiscountPct' | 'ownerMobile', string>>
+type FieldErrors = Partial<Record<'name' | 'city' | 'gstPct' | 'gstin' | 'loyaltyVisits' | 'loyaltyDiscountPct' | 'ownerMobile', string>>
 
 function fromBranch(b: BranchProfileDTO): BranchSettingsForm {
   return {
@@ -61,6 +62,7 @@ function fromBranch(b: BranchProfileDTO): BranchSettingsForm {
     upiQrImage: b.upiQrImage,
     gstEnabled: b.gstEnabled,
     gstPct: b.gstPct,
+    gstin: b.gstin ?? '',
     loyaltyEnabled: b.loyaltyEnabled,
     loyaltyVisits: b.loyaltyVisits,
     loyaltyDiscountPct: b.loyaltyDiscountPct,
@@ -264,6 +266,7 @@ export default function SettingsView() {
         upiQrImage: f.upiQrImage,
         gstEnabled: f.gstEnabled,
         gstPct: f.gstPct,
+        gstin: f.gstin.trim() ? f.gstin.trim().toUpperCase() : null,
         loyaltyEnabled: f.loyaltyEnabled,
         loyaltyVisits: f.loyaltyVisits,
         loyaltyDiscountPct: f.loyaltyDiscountPct,
@@ -286,6 +289,8 @@ export default function SettingsView() {
     if (form.name.trim().length < 2) e.name = 'Branch name is too short'
     if (form.city.trim().length < 2) e.city = 'City is required'
     if (form.gstEnabled && (form.gstPct < 0 || form.gstPct > 100)) e.gstPct = 'GST must be 0–100'
+    if (form.gstin.trim() && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(form.gstin.trim().toUpperCase()))
+      e.gstin = 'Enter a valid 15-character GSTIN'
     if (form.loyaltyEnabled && form.loyaltyVisits < 1) e.loyaltyVisits = 'At least 1 visit'
     if (form.loyaltyEnabled && (form.loyaltyDiscountPct < 0 || form.loyaltyDiscountPct > 100))
       e.loyaltyDiscountPct = 'Discount must be 0–100'
@@ -506,18 +511,37 @@ export default function SettingsView() {
             />
           </div>
           {form.gstEnabled && (
-            <div className="space-y-1.5">
-              <Label htmlFor="set-gst">GST %</Label>
-              <Input
-                id="set-gst"
-                inputMode="decimal"
-                className="tnum"
-                value={String(form.gstPct)}
-                onChange={(e) => set('gstPct', Number(e.target.value.replace(/[^\d.]/g, '')) || 0)}
-                aria-invalid={!!errors.gstPct}
-              />
-              {errors.gstPct && <p className="text-xs text-destructive">{errors.gstPct}</p>}
-            </div>
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="set-gst">GST %</Label>
+                <Input
+                  id="set-gst"
+                  inputMode="decimal"
+                  className="tnum"
+                  value={String(form.gstPct)}
+                  onChange={(e) => set('gstPct', Number(e.target.value.replace(/[^\d.]/g, '')) || 0)}
+                  aria-invalid={!!errors.gstPct}
+                />
+                {errors.gstPct && <p className="text-xs text-destructive">{errors.gstPct}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="set-gstin">GSTIN (for receipts)</Label>
+                <Input
+                  id="set-gstin"
+                  className="uppercase"
+                  placeholder="e.g. 27ABCDE1234F1Z5"
+                  maxLength={15}
+                  value={form.gstin}
+                  onChange={(e) => set('gstin', e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, ''))}
+                  aria-invalid={!!errors.gstin}
+                />
+                {errors.gstin ? (
+                  <p className="text-xs text-destructive">{errors.gstin}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Printed on bills as GSTIN — leave blank if not registered.</p>
+                )}
+              </div>
+            </>
           )}
           <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
             <div>

@@ -41,7 +41,10 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Pinch-zoom stays enabled (WCAG 1.4.4) — low-vision users must be able to
+  // zoom even on the POS. Double-tap-zoom is disabled instead.
+  maximumScale: 5,
+  userScalable: true,
   viewportFit: "cover",
 };
 

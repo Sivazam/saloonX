@@ -89,6 +89,10 @@ export const en = {
   continueToPayment: 'Continue to Payment',
   customerWord: 'Customer',
 
+  // Step 2 — customer (aria)
+  deleteDigit: 'Delete last digit',
+  undoDiscount: 'Undo discount',
+
   // Step 3 — payment
   payment: 'Payment',
   discount: 'Discount',
@@ -122,11 +126,17 @@ export const en = {
   upiNotConfigured: 'UPI not configured — ask admin',
   canStillConfirm: 'You can still confirm once you receive the payment.',
   paymentReceived: 'Payment Received',
+  qrGenerateFailed: "Couldn't generate the QR code",
+  qrUnavailable: 'QR code unavailable',
+  askPayUpi: 'Ask customer to pay {amount} to {id}',
+  upiIdLabel: 'UPI ID:',
+  retry: 'Try again',
   cardPayment: 'Card Payment',
   takeOnMachine: 'Take payment of', // "Take payment of ₹X on the card machine, then confirm."
   onMachineThenConfirm: 'on the card machine, then confirm.',
   confirmCard: 'Confirm Card Payment',
   loadingSettings: 'Loading payment settings…',
+  loadingSettingsFailed: 'Could not load payment settings',
   saving: 'Saving…',
   savingBill: 'Saving bill…',
 
@@ -240,6 +250,10 @@ export const hi: Dict = {
   continueToPayment: 'पेमेंट करें',
   customerWord: 'ग्राहक',
 
+  // Step 2 — customer (aria)
+  deleteDigit: 'आख़िरी अंक हटाएं',
+  undoDiscount: 'छूट हटाएं',
+
   // Step 3 — payment
   payment: 'पेमेंट',
   discount: 'छूट',
@@ -273,11 +287,17 @@ export const hi: Dict = {
   upiNotConfigured: 'UPI सेट नहीं है — एडमिन से कहें',
   canStillConfirm: 'पेमेंट मिलने पर आप फिर भी पक्का कर सकते हैं।',
   paymentReceived: 'पेमेंट मिल गया',
+  qrGenerateFailed: 'QR कोड बन नहीं पाया',
+  qrUnavailable: 'QR कोड उपलब्ध नहीं',
+  askPayUpi: 'ग्राहक से {id} पर {amount} भेजने को कहें',
+  upiIdLabel: 'UPI ID:',
+  retry: 'फिर कोशिश करें',
   cardPayment: 'कार्ड पेमेंट',
   takeOnMachine: 'कार्ड मशीन पर',
   onMachineThenConfirm: 'रकम लें, फिर पक्का करें।',
   confirmCard: 'कार्ड पेमेंट पक्का करें',
   loadingSettings: 'पेमेंट सेटिंग लोड हो रही है…',
+  loadingSettingsFailed: 'पेमेंट सेटिंग लोड नहीं हो सकी',
   saving: 'सेव हो रहा है…',
   savingBill: 'बिल सेव हो रहा है…',
 

@@ -15,11 +15,16 @@ const voidSchema = z.object({
  * PUT /api/transactions/void — ADMIN only.
  * Marks a bill VOIDED with an audit trail (who/when/why) and reverses the
  * customer aggregates (visits / totalSpend / lastVisitAt) that the bill created.
+ * Tenant-isolated: an admin can only ever void bills of their own franchise.
  */
 export async function PUT(request: Request) {
   const auth = await requireApiUser(["ADMIN"])
   if (!auth.user) return auth.response
   const user = auth.user
+
+  if (!user.tenantId) {
+    return NextResponse.json({ error: "No franchise on this account" }, { status: 403 })
+  }
 
   const parsed = voidSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
@@ -32,20 +37,28 @@ export async function PUT(request: Request) {
     if (!txn) {
       return { error: "Bill not found", status: 404 as const }
     }
+    // Tenant isolation — the bill MUST belong to the admin's own franchise.
+    if (txn.tenantId !== user.tenantId) {
+      return { error: "Not authorized", status: 403 as const }
+    }
     if (txn.status === "VOIDED") {
       return { error: "This bill is already voided", status: 409 as const }
     }
 
-    const updated = await tx.transaction.update({
-      where: { id },
+    // Race-safe transition: only a still-COMPLETED bill can be voided, so two
+    // overlapping voids can never double-reverse the customer aggregates.
+    const updated = await tx.transaction.updateMany({
+      where: { id, status: "COMPLETED" },
       data: {
         status: "VOIDED",
         voidedAt: new Date(),
         voidedByUserId: user.id,
         voidReason: reason || null,
       },
-      include: { items: true },
     })
+    if (updated.count === 0) {
+      return { error: "This bill is already voided", status: 409 as const }
+    }
 
     // Reverse customer aggregates so loyalty totals stay truthful.
     if (txn.customerId) {
@@ -64,7 +77,8 @@ export async function PUT(request: Request) {
       })
     }
 
-    return { transaction: updated }
+    const fresh = await tx.transaction.findUniqueOrThrow({ where: { id }, include: { items: true } })
+    return { transaction: fresh }
   })
 
   if ("error" in result) {

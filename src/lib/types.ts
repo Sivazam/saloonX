@@ -40,6 +40,8 @@ export interface BranchProfileDTO {
   billPrefix: string
   gstEnabled: boolean
   gstPct: number
+  /** Branch GSTIN — printed on receipts when GST is enabled (null = not registered). */
+  gstin: string | null
   loyaltyEnabled: boolean
   loyaltyVisits: number
   loyaltyDiscountPct: number

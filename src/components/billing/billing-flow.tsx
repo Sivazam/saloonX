@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
 import { Check, Loader2 } from 'lucide-react'
@@ -30,6 +30,7 @@ import {
 } from './steps/customer-step'
 import { PaymentStep } from './steps/payment-step'
 import { SuccessStep } from './steps/success-step'
+import { Button } from '@/components/ui/button'
 import { LangToggle } from '@/components/shell/lang-toggle'
 
 type Step = 1 | 2 | 3 | 4
@@ -72,6 +73,19 @@ export default function BillingFlow() {
   const [submitting, setSubmitting] = useState(false)
   const [bill, setBill] = useState<TransactionDTO | null>(null)
   const [billBranch, setBillBranch] = useState<BranchProfileDTO | null>(null)
+
+  // Switching branches must not carry the previous branch's discount,
+  // loyalty decision, note or step position into the new bill context.
+  const branchId = currentBranch?.id ?? null
+  const prevBranchId = useRef(branchId)
+  useEffect(() => {
+    if (prevBranchId.current !== null && branchId !== prevBranchId.current) {
+      resetCustomerState()
+      setStep(1)
+      setDir(1)
+    }
+    prevBranchId.current = branchId
+  }, [branchId])
 
   // ── Shared keypad (mobile number persists across steps) ──────────────────
   const runLookup = useCallback(async (mobile: string) => {
@@ -286,7 +300,11 @@ export default function BillingFlow() {
     } catch (e) {
       // Connection died mid-request (network-level failure, not a server
       // rejection) → fall back to the offline queue so the bill isn't lost.
-      if (e instanceof TypeError && /fetch|network/i.test(e.message)) {
+      // Every browser surfaces fetch failures as TypeError (Safari: "Load
+      // failed"), so treat ANY TypeError — or being offline now — as a
+      // network failure rather than matching fragile message strings.
+      const offlineNow = typeof navigator !== 'undefined' && !navigator.onLine
+      if (offlineNow || e instanceof TypeError) {
         saveOffline(method)
         return
       }
@@ -475,10 +493,19 @@ export default function BillingFlow() {
                 exit="exit"
                 transition={{ duration: 0.22, ease: 'easeOut' }}
               >
-                <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-xl border bg-card p-10 text-center">
-                  <Loader2 className="size-8 animate-spin text-primary" />
-                  <p className="font-semibold">{L.loadingSettings}</p>
-                </div>
+                {branchQuery.isError ? (
+                  <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-xl border bg-card p-10 text-center">
+                    <p className="font-semibold">{L.loadingSettingsFailed}</p>
+                    <Button variant="outline" onClick={() => void branchQuery.refetch()}>
+                      {L.tryAgain}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-xl border bg-card p-10 text-center">
+                    <Loader2 className="size-8 animate-spin text-primary" />
+                    <p className="font-semibold">{L.loadingSettings}</p>
+                  </div>
+                )}
               </motion.div>
             )}
 

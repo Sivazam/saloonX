@@ -30,6 +30,13 @@ const updateSchema = z.object({
     .nullable(),
   gstEnabled: z.boolean().optional(),
   gstPct: z.number().min(0).max(100).optional(),
+  gstin: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/, "Enter a valid 15-character GSTIN")
+    .optional()
+    .nullable(),
   loyaltyEnabled: z.boolean().optional(),
   loyaltyVisits: z.number().int().min(1).max(100).optional(),
   loyaltyDiscountPct: z.number().min(0).max(100).optional(),
@@ -62,6 +69,7 @@ export async function PUT(request: Request) {
       ...(d.ownerMobile !== undefined ? { ownerMobile: d.ownerMobile } : {}),
       ...(d.gstEnabled !== undefined ? { gstEnabled: d.gstEnabled } : {}),
       ...(d.gstPct !== undefined ? { gstPct: d.gstPct } : {}),
+      ...(d.gstin !== undefined ? { gstin: d.gstin } : {}),
       ...(d.loyaltyEnabled !== undefined ? { loyaltyEnabled: d.loyaltyEnabled } : {}),
       ...(d.loyaltyVisits !== undefined ? { loyaltyVisits: d.loyaltyVisits } : {}),
       ...(d.loyaltyDiscountPct !== undefined ? { loyaltyDiscountPct: d.loyaltyDiscountPct } : {}),

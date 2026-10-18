@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server"
+import { Prisma } from "@prisma/client"
 import { z } from "zod"
 import { db } from "@/lib/db"
 import { adminBranchScope, requireApiBranch, requireApiUser } from "@/lib/auth"
 import { dayEnd, dayStart, round2, toBranchProfileDTO, toTransactionDTO } from "@/lib/serialize"
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit"
 import type { BranchRef, BranchSummaryStat, PaymentMethod } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -21,7 +23,10 @@ const customItemSchema = z.object({
 })
 
 const createSchema = z.object({
-  items: z.array(z.union([serviceItemSchema, customItemSchema])).min(1, "Add at least one service"),
+  items: z
+    .array(z.union([serviceItemSchema, customItemSchema]))
+    .min(1, "Add at least one service")
+    .max(100, "Too many items on one bill"),
   customerMobile: z.string().regex(/^\d{10}$/, "Mobile must be 10 digits").optional().nullable(),
   customerName: z.string().trim().max(60).optional().nullable(),
   discountPct: z.number().min(0).max(100).optional(),
@@ -33,7 +38,34 @@ const createSchema = z.object({
   clientCreatedAt: z.string().datetime().optional(),
 })
 
+type CreateInput = z.infer<typeof createSchema>
+
+/** Replay an already-synced bill — shared by the pre-check and the P2002 catch.
+ *  Tenant-scoped: a replay lookup can never surface another franchise's bill. */
+async function findReplay(clientRequestId: string, tenantId: string) {
+  return db.transaction.findFirst({
+    where: { clientRequestId, tenantId },
+    include: { items: true },
+  })
+}
+
+async function replayResponse(existing: NonNullable<Awaited<ReturnType<typeof findReplay>>>) {
+  const existingBranch = await db.branch.findUnique({
+    where: { id: existing.branchId },
+    include: { tenant: true },
+  })
+  return NextResponse.json({
+    transaction: toTransactionDTO(existing, existingBranch?.tenant.name ?? ""),
+    branch: existingBranch ? toBranchProfileDTO(existingBranch) : null,
+    duplicate: true,
+  })
+}
+
 export async function POST(request: Request) {
+  // Bill-spam guard: a busy counter bursts far below this; abuse does not.
+  const rl = rateLimit(`bill:${clientIp(request)}`, 240, 60_000)
+  if (!rl.ok) return tooManyRequests(rl.retryAfter)
+
   const auth = await requireApiBranch()
   if (!auth.user) return auth.response
   const { user, branch } = auth
@@ -42,32 +74,65 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 })
   }
-  const { items, customerMobile, customerName, discountPct = 0, paymentMethod, note, clientRequestId, clientCreatedAt } = parsed.data
+  const input = parsed.data
 
   // Idempotency: a queued offline bill that already synced must return the
   // SAME transaction instead of double-billing (e.g. response lost mid-sync).
-  if (clientRequestId) {
-    const existing = await db.transaction.findUnique({
-      where: { clientRequestId },
-      include: { items: true },
-    })
-    if (existing) {
-      const existingBranch = await db.branch.findUnique({
-        where: { id: existing.branchId },
-        include: { tenant: true },
-      })
-      return NextResponse.json({
-        transaction: toTransactionDTO(existing, existingBranch?.tenant.name ?? ""),
-        branch: existingBranch ? toBranchProfileDTO(existingBranch) : null,
-        duplicate: true,
-      })
+  if (input.clientRequestId) {
+    const existing = await findReplay(input.clientRequestId, branch.tenantId)
+    if (existing) return replayResponse(existing)
+  }
+
+  // Offline bills keep their true local payment time — clamped so a buggy or
+  // tampered device can neither backdate revenue into history nor pre-date a
+  // bill into the future.
+  let createdAt: Date | undefined
+  if (input.clientCreatedAt) {
+    const parsedAt = new Date(input.clientCreatedAt)
+    const now = Date.now()
+    if (!Number.isNaN(parsedAt.getTime()) && parsedAt.getTime() <= now && parsedAt.getTime() > now - 7 * 86_400_000) {
+      createdAt = parsedAt
     }
   }
 
-  // Offline bills keep their true local payment time.
-  const createdAt = clientCreatedAt ? new Date(clientCreatedAt) : undefined
+  let result: Awaited<ReturnType<typeof runBillTransaction>>
+  try {
+    result = await runBillTransaction(input, user, branch, createdAt)
+  } catch (err) {
+    // Two concurrent syncs of the same offline bill: the unique constraint on
+    // clientRequestId makes the loser throw — return the winner's bill so the
+    // retry succeeds as a replay instead of surfacing an HTTP 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002" && input.clientRequestId) {
+      const existing = await findReplay(input.clientRequestId, branch.tenantId)
+      if (existing) return replayResponse(existing)
+      return NextResponse.json(
+        { error: "A bill with this number already exists — please retry" },
+        { status: 409 },
+      )
+    }
+    console.error("[transactions:POST] bill failed:", err)
+    return NextResponse.json({ error: "Could not save the bill — please retry" }, { status: 500 })
+  }
 
-  const result = await db.$transaction(async (tx) => {
+  if ("error" in result) {
+    return NextResponse.json({ error: result.error }, { status: 400 })
+  }
+
+  return NextResponse.json({
+    transaction: toTransactionDTO(result.transaction, branch.tenant.name),
+    branch: result.branch ? toBranchProfileDTO(result.branch) : null,
+  })
+}
+
+async function runBillTransaction(
+  input: CreateInput,
+  user: { id: string; name: string },
+  branch: { id: string; name: string; tenantId: string; gstEnabled: boolean; gstPct: number },
+  createdAt: Date | undefined,
+) {
+  const { items, customerMobile, customerName, discountPct = 0, paymentMethod, note, clientRequestId } = input
+
+  return db.$transaction(async (tx) => {
     // Split into menu services vs custom-amount items.
     const serviceItems = items.filter((i): i is z.infer<typeof serviceItemSchema> => "serviceId" in i)
 
@@ -209,15 +274,6 @@ export async function POST(request: Request) {
 
     return { transaction, branch: freshBranch }
   })
-
-  if ("error" in result) {
-    return NextResponse.json({ error: result.error }, { status: 400 })
-  }
-
-  return NextResponse.json({
-    transaction: toTransactionDTO(result.transaction, branch.tenant.name),
-    branch: result.branch ? toBranchProfileDTO(result.branch) : null,
-  })
 }
 
 export async function GET(request: Request) {
@@ -240,13 +296,29 @@ export async function GET(request: Request) {
   if (scope.error) return NextResponse.json({ error: scope.error }, { status: 403 })
   const branchIds = scope.branchIds ?? []
 
-  const branchFilter =
-    branchIds.length === 0
-      ? undefined // nothing accessible — unreachable for admins, safety net
-      : { branchId: { in: branchIds } }
+  // An empty scope (franchise paused / no approved branches) must return NO
+  // data — an unfiltered where would leak every tenant's bills platform-wide.
+  if (branchIds.length === 0) {
+    return NextResponse.json({
+      data: [],
+      total: 0,
+      branches: [],
+      summary: {
+        revenue: 0,
+        count: 0,
+        avgBill: 0,
+        byMethod: {
+          CASH: { amount: 0, count: 0 },
+          UPI: { amount: 0, count: 0 },
+          CARD: { amount: 0, count: 0 },
+        },
+        byBranch: [],
+      },
+    })
+  }
 
   const where = {
-    ...(branchFilter ?? {}),
+    branchId: { in: branchIds },
     ...(from || to
       ? {
           AND: [
@@ -277,13 +349,11 @@ export async function GET(request: Request) {
       take: limit,
     }),
     db.transaction.count({ where }),
-    branchIds.length
-      ? db.branch.findMany({
-          where: { id: { in: branchIds } },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true, city: true },
-        })
-      : Promise.resolve([]),
+    db.branch.findMany({
+      where: { id: { in: branchIds } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, city: true },
+    }),
   ])
 
   // Summary across the entire filtered set (not just the current page).

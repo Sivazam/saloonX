@@ -15,7 +15,13 @@ export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string
   const lines: string[] = []
   lines.push(`*${b.name}*`)
   if (b.tenantName && b.tenantName !== b.name) lines.push(b.tenantName)
+  if (b.gstin) lines.push(`GSTIN: ${b.gstin}`)
   lines.push(`Bill ${t.billNo} \u00b7 ${formatDateTime(t.createdAt)}`)
+  if (t.customerName || t.customerMobile) {
+    lines.push(
+      `Customer: ${[t.customerName, t.customerMobile].filter(Boolean).join(' · ')}`,
+    )
+  }
   lines.push('------------------------')
   for (const item of t.items) {
     lines.push(`${item.serviceName} x${item.qty} \u2014 ${formatINR(item.price * item.qty)}`)
@@ -23,7 +29,10 @@ export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string
   lines.push('------------------------')
   lines.push(`Subtotal: ${formatINR(t.subtotal)}`)
   if (t.discountPct > 0) lines.push(`Discount (${t.discountPct}%): \u2212${formatINR(t.discountAmount)}`)
-  if (t.gstAmount > 0) lines.push(`GST (${t.gstPct}%): ${formatINR(t.gstAmount)}`)
+  if (t.gstAmount > 0) {
+    lines.push(`CGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(t.gstAmount / 2)}`)
+    lines.push(`SGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(t.gstAmount / 2)}`)
+  }
   lines.push(`*Total: ${formatINR(t.total)}*`)
   lines.push(`Paid via ${t.paymentMethod}`)
   if (t.note) lines.push(`Note: ${t.note}`)
@@ -83,6 +92,11 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
     doc.text(`Phone: ${b.phone}`, W / 2, y, { align: 'center' })
     y += 4.5
   }
+  // GSTIN — required on a tax invoice when the branch is GST-registered.
+  if (b.gstin) {
+    doc.text(`GSTIN: ${b.gstin}`, W / 2, y, { align: 'center' })
+    y += 4.5
+  }
   doc.setTextColor(0)
 
   // Bill meta
@@ -94,7 +108,21 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   doc.text(`Bill ${t.billNo}`, M, y)
   doc.setFont('helvetica', 'normal')
   doc.text(formatDateTime(t.createdAt), right, y, { align: 'right' })
-  y += 7
+  y += 6.5
+  // Customer line (when the bill is tied to a customer).
+  if (t.customerName || t.customerMobile) {
+    doc.setFontSize(9)
+    doc.setTextColor(90)
+    doc.text(
+      `Customer: ${[t.customerName, t.customerMobile].filter(Boolean).join(' · ')}`,
+      M,
+      y,
+    )
+    doc.setTextColor(0)
+    doc.setFontSize(10)
+    y += 6
+  }
+  y += 0.5
 
   // Items
   doc.setFontSize(11)
@@ -124,8 +152,14 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
     y += 6
   }
   if (t.gstAmount > 0) {
-    doc.text(`GST (${t.gstPct}%)`, M, y)
-    doc.text(rs(t.gstAmount), right, y, { align: 'right' })
+    // Intra-state sale → tax is split CGST + SGST (half each). Salons bill
+    // within their own state, so the split is always applicable here.
+    const halfPct = (t.gstPct / 2).toFixed(2).replace(/\.?0+$/, '')
+    doc.text(`CGST (${halfPct}%)`, M, y)
+    doc.text(rs(t.gstAmount / 2), right, y, { align: 'right' })
+    y += 6
+    doc.text(`SGST (${halfPct}%)`, M, y)
+    doc.text(rs(t.gstAmount / 2), right, y, { align: 'right' })
     y += 6
   }
   doc.setFont('helvetica', 'bold')

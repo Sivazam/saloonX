@@ -86,3 +86,14 @@ db/                SQLite database file
 
 - The app targets Indian salon workflows: ₹ currency, UPI QR payments, WhatsApp receipt delivery, festive-returning-customer discounts, Hindi/English toggle.
 - API guards: `requireApiUser(roles?)` / `requireApiBranch(roles?)` (Super Admin is rejected from tenant-scoped endpoints).
+
+## Production Hardening (v0.3)
+
+- **Tenant isolation** — void + reporting/export endpoints are strictly franchise-scoped; an empty branch scope returns empty data, never another tenant's ledger.
+- **Rate limiting** — in-memory sliding-window limiter on login token exchange, public QR-menu lead signup and bill creation (`src/lib/rate-limit.ts`).
+- **Billing integrity** — concurrent offline-sync duplicates replay the winner's bill (P2002 → replay) instead of a 500; offline `clientCreatedAt` is clamped to the last 7 days; bill item count capped at 100.
+- **GST-ready receipts** — optional per-branch GSTIN (Settings → GST), receipts print customer name/mobile, GSTIN and a CGST/SGST split.
+- **Performance** — Prisma indexes on Transaction / Expense / Session / MenuLead hot paths.
+- **Legacy routes removed** — pre-Firebase PIN login, public staff rosters and the old singleton settings API are gone.
+- **PWA UX** — UPI QR failure state with retry, offline-queue dead-letter after 10 attempts (with confirm-guarded discard), refresh-safe cart, adaptive cash quick-tender chips, pinch-zoom allowed for accessibility.
+- **Deployment knobs** — set `NEXT_PUBLIC_SHOW_DEMO_HINTS=false` to hide demo credentials on the login screen; cookies set `secure` automatically in production (`FORCE_SECURE_COOKIES=1` to force behind a TLS proxy).

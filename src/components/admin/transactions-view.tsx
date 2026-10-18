@@ -407,10 +407,15 @@ export default function TransactionsView() {
 
   function exportCsv() {
     toast('Preparing CSV…')
-    window.open(
-      `/api/export/csv?from=${range.from}&to=${range.to}${method ? `&method=${method}` : ''}${branchFilter !== 'all' ? `&branchId=${branchFilter}` : ''}`,
-      '_blank',
-    )
+    // The CSV must mirror the on-screen filters exactly (method, staff,
+    // search, branch) — otherwise the export silently disagrees with the
+    // ledger the owner is looking at.
+    const p = new URLSearchParams({ from: range.from, to: range.to })
+    if (method) p.set('method', method)
+    if (staffId !== 'all') p.set('staffId', staffId)
+    if (branchFilter !== 'all') p.set('branchId', branchFilter)
+    if (debouncedSearch) p.set('search', debouncedSearch)
+    window.open(`/api/export/csv?${p.toString()}`, '_blank', 'noopener')
   }
 
   function exportPdf() {

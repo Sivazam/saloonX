@@ -17,6 +17,8 @@ export function LangToggle({ className = '' }: { className?: string }) {
   function toggle() {
     const next = lang === 'en' ? 'hi' : 'en'
     setLang(next)
+    // Screen readers / TTS must pronounce Hindi text with a Hindi voice.
+    document.documentElement.lang = next
     // Signed in → persist on the profile (fire-and-forget; the toggle itself
     // must never wait on the network). The login screen has no session yet,
     // so its toggle only touches localStorage.

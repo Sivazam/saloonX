@@ -167,6 +167,11 @@ export interface SyncResult {
   bills: { billNo: string; total: number }[]
 }
 
+/** A bill the server keeps rejecting stops auto-retrying after this many
+ *  attempts — it stays queued (with its error) for manual review/discards
+ *  instead of burning battery and log noise every 30 seconds forever. */
+export const MAX_SYNC_ATTEMPTS = 10
+
 let syncing = false
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -204,8 +209,10 @@ async function pushOne(bill: QueuedBill): Promise<{ billNo: string; total: numbe
 
 /** Try to sync the whole queue. Safe to call repeatedly — concurrent calls
  *  no-op. Network errors abort the run (queue stays); server rejections
- *  (e.g. a service was deleted meanwhile) mark the bill and continue. */
-export async function syncQueue(): Promise<SyncResult> {
+ *  (e.g. a service was deleted meanwhile) mark the bill and continue.
+ *  Bills that exceeded MAX_SYNC_ATTEMPTS are skipped (manual sync/“Sync now”
+ *  gives them one more shot via force=true). */
+export async function syncQueue(force = false): Promise<SyncResult> {
   const result: SyncResult = { synced: 0, failed: 0, offline: false, bills: [] }
   if (syncing || (typeof navigator !== 'undefined' && !navigator.onLine)) {
     result.offline = true
@@ -216,6 +223,7 @@ export async function syncQueue(): Promise<SyncResult> {
   try {
     const bills = await getQueuedBills()
     for (const bill of bills) {
+      if (!force && bill.attempts >= MAX_SYNC_ATTEMPTS) continue // dead letter — needs human eyes
       try {
         const done = await pushOne(bill)
         await removeQueuedBill(bill.clientRequestId)

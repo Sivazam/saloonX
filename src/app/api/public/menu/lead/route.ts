@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit"
 import type { MenuLeadResponse } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -28,6 +29,11 @@ function newCode(): string {
  * moment the guest walks in.
  */
 export async function POST(request: Request) {
+  // Per-IP flood guard (the per-mobile guard below is self-limiting, but an
+  // attacker rotating mobiles would otherwise create unbounded rows).
+  const rl = rateLimit(`lead:${clientIp(request)}`, 10, 60 * 60_000)
+  if (!rl.ok) return tooManyRequests(rl.retryAfter)
+
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 })

@@ -3,6 +3,7 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { SESSION_COOKIE, createSession } from "@/lib/auth"
 import { verifyFirebaseToken } from "@/lib/firebase-rest"
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit"
 
 export const dynamic = "force-dynamic"
 
@@ -19,6 +20,10 @@ const bodySchema = z.object({
  * branch as the starting POS context (multi-branch users switch in-app).
  */
 export async function POST(request: Request) {
+  // Brute-force guard: 10 login exchanges per IP per 5 minutes.
+  const rl = rateLimit(`login:${clientIp(request)}`, 10, 5 * 60_000)
+  if (!rl.ok) return tooManyRequests(rl.retryAfter)
+
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 })
@@ -50,8 +55,9 @@ export async function POST(request: Request) {
   }
 
   if (!user) {
+    // Deliberately vague — never confirm whether an email has an account.
     return NextResponse.json(
-      { error: "No SaloonX account for this email — ask your franchise admin to add you" },
+      { error: "Sign-in failed — this account may not exist yet. Ask your franchise admin to add you." },
       { status: 403 },
     )
   }
@@ -82,6 +88,7 @@ export async function POST(request: Request) {
   response.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
+    secure: process.env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIES === "1",
     path: "/",
     expires: expiresAt,
   })

@@ -23,12 +23,24 @@ export async function GET(request: Request) {
   if (scope.error) return Response.json({ error: scope.error }, { status: 403 })
   const branchIds = scope.branchIds ?? []
 
+  // Neutralise spreadsheet formula injection.
+  const esc = (v: string) => {
+    const safe = /^[=+@\t\r]|^\-/.test(v) ? `'${v}` : v
+    return `"${safe.replace(/"/g, '""')}"`
+  }
+
   const from = fromParam ? dayStart(fromParam) : null
   const to = toParam ? dayEnd(toParam) : null
   const validCategory = ["RENT", "SUPPLIES", "SALARY", "UTILITY", "MARKETING", "MAINTENANCE", "OTHER"]
 
+  // Empty scope (no approved branches) → an empty ledger, never the platform.
+  const cols = ["Date", "Category", "Description", "Amount (INR)", "Branch", "Entered by", "Logged at"]
+  if (branchIds.length === 0) {
+    return csvResponse([cols], "all")
+  }
+
   const where = {
-    ...(branchIds.length ? { branchId: { in: branchIds } } : {}),
+    branchId: { in: branchIds },
     ...(from || to
       ? {
           AND: [
@@ -46,8 +58,7 @@ export async function GET(request: Request) {
     include: { branch: { select: { name: true } } },
   })
 
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`
-  const lines = [["Date", "Category", "Description", "Amount (INR)", "Branch", "Entered by", "Logged at"].join(",")]
+  const lines = [cols]
   for (const e of rows) {
     const d = e.date
     const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
@@ -61,13 +72,16 @@ export async function GET(request: Request) {
         e.createdByName,
         `${e.createdAt.getFullYear()}-${String(e.createdAt.getMonth() + 1).padStart(2, "0")}-${String(e.createdAt.getDate()).padStart(2, "0")}`,
       ]
-        .map((c) => esc(String(c)))
-        .join(","),
+        .map((c) => esc(String(c))),
     )
   }
 
-  const csv = "\uFEFF" + lines.join("\r\n")
   const suffix = validCategory.includes(category) ? category.toLowerCase() : "all"
+  return csvResponse(lines, suffix)
+}
+
+function csvResponse(rows: string[][], suffix: string): Response {
+  const csv = "\uFEFF" + rows.map((r) => r.join(",")).join("\r\n")
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

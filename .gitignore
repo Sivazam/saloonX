@@ -64,3 +64,4 @@ server.log
 
 # git bundle backups
 *.bundle
+/db/*.db

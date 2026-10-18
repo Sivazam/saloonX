@@ -48,6 +48,9 @@ model Branch {
   // Branch-level billing settings (GST / loyalty / receipt)
   gstEnabled     Boolean @default(false)
   gstPct         Float   @default(18)
+  /** The branch's own GSTIN (15-char GST identification number) — printed on
+      tax invoices when GST is enabled. Optional: small salons bill without GST. */
+  gstin          String?
   loyaltyEnabled Boolean @default(true)
   loyaltyVisits  Int     @default(3)
   loyaltyDiscountPct Float @default(10)
@@ -107,6 +110,9 @@ model Session {
   branchId  String? // current POS branch context (null for SUPER_ADMIN sessions)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // Franchise-level menu. Branches inherit prices via Service.price unless a
@@ -218,6 +224,12 @@ model Transaction {
   voidReason     String?
   createdAt      DateTime          @default(now())
   items          TransactionItem[]
+
+  @@index([branchId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([customerId])
+  @@index([staffId, createdAt])
+  @@index([status])
 }
 
 model TransactionItem {
@@ -241,6 +253,8 @@ model Expense {
   date          DateTime // the day the expense occurred (owner may log past expenses)
   createdByName String // snapshot of who logged it
   createdAt     DateTime @default(now())
+
+  @@index([branchId, date])
 }
 
 // Franchise-level announcements shown in the bell menu (branch approved /
@@ -289,4 +303,6 @@ model MenuLead {
   redeemedAt DateTime?
 
   @@index([tenantId, mobile])
+  @@index([branchId, mobile, createdAt])
+  @@index([customerId])
 }

@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { formatINR } from '@/lib/format'
 import {
   QUEUE_EVENT,
+  MAX_SYNC_ATTEMPTS,
   getQueuedBills,
   installAutoSync,
   queuedBillToPreview,
@@ -30,6 +31,16 @@ import {
 import { downloadReceiptPdf } from '@/components/billing/receipt-pdf'
 import { useAppStore } from '@/store/use-app-store'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { formatTime } from '@/lib/format'
 import { apiGet } from '@/lib/api-client'
@@ -45,6 +56,7 @@ export function SyncIndicator() {
   const [online, setOnline] = useState(true)
   const [queue, setQueue] = useState<QueuedBill[]>([])
   const [syncing, setSyncing] = useState(false)
+  const [discardTarget, setDiscardTarget] = useState<QueuedBill | null>(null)
   const prevQueueLen = useRef(0)
   const user = useAppStore((s) => s.user)
 
@@ -109,11 +121,11 @@ export function SyncIndicator() {
         ? 'pending'
         : 'online'
 
-  const runSync = async () => {
+  const runSync = async (force = false) => {
     if (syncing || !online) return
     setSyncing(true)
     try {
-      const r = await syncQueue()
+      const r = await syncQueue(force)
       refresh()
       if (r.synced > 0) {
         toast.success(`Synced ${r.synced} bill${r.synced > 1 ? 's' : ''}`, {
@@ -237,7 +249,7 @@ export function SyncIndicator() {
             </p>
           </div>
           {pending > 0 && online && (
-            <Button size="sm" className="h-8 gap-1" onClick={() => void runSync()} disabled={syncing}>
+            <Button size="sm" className="h-8 gap-1" onClick={() => void runSync(true)} disabled={syncing}>
               {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               Sync now
             </Button>
@@ -271,6 +283,11 @@ export function SyncIndicator() {
                       {formatINR(b.display.total)} · {b.payload.paymentMethod} · {formatTime(b.display.createdAt)}
                       {b.lastError ? ` · ⚠ ${b.lastError}` : ''}
                     </p>
+                    {b.attempts >= MAX_SYNC_ATTEMPTS && (
+                      <p className="text-[10px] font-semibold text-destructive">
+                        Auto-sync stopped after {b.attempts} tries — use “Sync now” to retry once more.
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -285,7 +302,7 @@ export function SyncIndicator() {
                     type="button"
                     aria-label="Discard this offline bill"
                     title="Discard this bill — it will never be synced"
-                    onClick={() => void removeQueuedBill(b.clientRequestId)}
+                    onClick={() => setDiscardTarget(b)}
                     className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                   >
                     <Trash2 className="size-3.5" />
@@ -328,6 +345,37 @@ export function SyncIndicator() {
           </div>
         )}
       </PopoverContent>
+
+      {/* Discard confirmation — an unsynced bill is real revenue; losing it
+          to a stray tap is the most destructive thing this popover can do. */}
+      <AlertDialog open={discardTarget !== null} onOpenChange={(o) => !o && setDiscardTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this offline bill?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {discardTarget && (
+                <>
+                  {formatINR(discardTarget.display.total)} · {discardTarget.display.itemSummary} — it was
+                  never synced, so discarding removes it from this device forever. The money will not appear
+                  in any report. If the customer actually paid, keep the bill and let it sync.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep the bill</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={() => {
+                if (discardTarget) void removeQueuedBill(discardTarget.clientRequestId)
+                setDiscardTarget(null)
+              }}
+            >
+              Discard permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Popover>
   )
 }

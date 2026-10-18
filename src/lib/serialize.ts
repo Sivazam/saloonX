@@ -150,6 +150,7 @@ export function toBranchProfileDTO(b: Branch & { tenant: BranchTenantLite }): Br
     billPrefix: b.billPrefix,
     gstEnabled: b.gstEnabled,
     gstPct: b.gstPct,
+    gstin: b.gstin,
     loyaltyEnabled: b.loyaltyEnabled,
     loyaltyVisits: b.loyaltyVisits,
     loyaltyDiscountPct: b.loyaltyDiscountPct,

@@ -54,6 +54,37 @@ function friendly(raw: string): string {
   return 'Could not sign in — please try again'
 }
 
+/** Collapsed-by-default demo credentials card. Gated behind NEXT_PUBLIC_SHOW_DEMO_HINTS:
+ *  set to "false" on a production deployment to hide it entirely. */
+function DemoAccountsCard() {
+  const [open, setOpen] = useState(false)
+  if (process.env.NEXT_PUBLIC_SHOW_DEMO_HINTS === 'false') return null
+  return (
+    <div className="mt-8 rounded-xl border bg-muted/50">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between px-3.5 py-3 text-left"
+      >
+        <span className="micro text-muted-foreground">Demo accounts</span>
+        <span className="text-xs font-semibold text-muted-foreground">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <p className="px-3.5 pb-3.5 text-xs leading-relaxed text-muted-foreground">
+          Platform — <span className="font-semibold text-foreground">dev@saloonx.example</span>
+          <br />
+          Franchise admin — <span className="font-semibold text-foreground">ravi@glowgo.example</span>
+          <br />
+          Staff — <span className="font-semibold text-foreground">priya@glowgo.example</span>
+          <span className="text-muted-foreground"> · password </span>
+          <span className="font-semibold text-foreground">saloon123</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
 /* ── Split-screen layout ──────────────────────────────────────────────── */
 
 function BrandPanel() {
@@ -429,18 +460,9 @@ export function LoginView() {
                     )}
                   </form>
 
-                  <div className="mt-8 rounded-xl border bg-muted/50 p-3.5">
-                    <p className="micro text-muted-foreground">Demo accounts</p>
-                    <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                      Platform — <span className="font-semibold text-foreground">dev@saloonx.example</span>
-                      <br />
-                      Franchise admin — <span className="font-semibold text-foreground">ravi@glowgo.example</span>
-                      <br />
-                      Staff — <span className="font-semibold text-foreground">priya@glowgo.example</span>
-                      <span className="text-muted-foreground"> · password </span>
-                      <span className="font-semibold text-foreground">saloon123</span>
-                    </p>
-                  </div>
+                  {/* Demo accounts — collapsed by default so a real deployment's
+                      login screen isn't advertising credentials. */}
+                  <DemoAccountsCard />
                 </motion.div>
               )}
             </AnimatePresence>

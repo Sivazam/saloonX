@@ -739,3 +739,30 @@ Stage Summary (VERIFIED end-to-end via agent-browser + VLM):
 - Health: tsc 0 errors (src+prisma), lint CLEAN, dev.log 19/20 2xx no 500s.
 - Remaining for next phase: (1) menuOfferPct editor only per branch via QR view (fine); (2) poster could offer A4/table-tent variants; (3) public menu i18n (hi) not needed for guests per current call; (4) super-admin cross-franchise QR/leads rollup not built (per-tenant only); (5) TODO from before: WishEvent model, merged offline-queue PDF, ±999% growth cap, per-branch drill-down, FCM push.
 - PUSH TO GITHUB still blocked on credentials (see GIT-1 above) — everything is committed locally (HEAD 5df1d58).
+
+---
+Task ID: 1
+Agent: Z.ai Code (main agent)
+Task: Production-readiness audit + fixes for SaloonX (salon billing PWA) — identify all gaps, fix them, polish UI/UX for market readiness.
+
+Work Log:
+- Audited all 40 API routes, billing flow, offline queue, seed, schema (2 parallel deep-analysis agents).
+- SECURITY: deleted 4 legacy routes that leaked data publicly or crashed at runtime (api/auth/login, api/auth/users, api/auth/branches, api/settings).
+- SECURITY: cross-tenant void fixed — void route now verifies txn.tenantId === user.tenantId and uses a race-safe conditional updateMany (no double aggregate reversal).
+- SECURITY: fixed empty-scope tenant-isolation failure in transactions GET + both CSV exports (empty adminBranchScope now returns empty data, never the whole platform).
+- SECURITY: rate limiting added (src/lib/rate-limit.ts, in-memory sliding window) on firebase-session (10/5min/IP), public menu lead (10/hr/IP), transactions POST (240/min/IP).
+- SECURITY: session cookie now sets `secure` in production; login error made enumeration-vague; CSV exports neutralise formula injection (=, +, -, @); clientRequestId replay lookups are tenant-scoped.
+- BILLING: POST /api/transactions wrapped in try/catch — concurrent duplicate syncs now replay the winner (P2002 catch) instead of HTTP 500; clientCreatedAt clamped to [now-7d, now]; items capped at 100.
+- BILLING: Branch.gstin field added (schema + DTO + branch PUT with 15-char GSTIN validation + Settings UI field); receipt PDF now prints customer name/mobile, GSTIN, and CGST/SGST split lines; WhatsApp text receipt matches.
+- PERF: Prisma indexes added — Transaction(branchId+createdAt, tenantId+createdAt, customerId, staffId+createdAt, status), Expense(branchId+date), Session(userId, expiresAt), MenuLead(branchId+mobile+createdAt, customerId).
+- UX: UPI QR failure no longer shows an infinite skeleton — proper failed state with a Try-again retry; step-3 branch profile load failure got an error + retry state; Safari offline detection broadened (any TypeError / navigator.onLine check) so offline bills always queue.
+- UX: offline queue stops auto-retrying after 10 attempts (dead-letter with "Sync now" force retry); discarding an offline bill now requires confirmation; queue shows per-bill failure + attempt info.
+- UX: cash quick-tender chips adapt to the bill total (round-ups + covering notes; ₹2000 only when needed); CSV export now mirrors on-screen filters (staff + search included); branch switch resets in-progress discount/loyalty/note/step; cart survives refresh (localStorage); Feb-29 birthday countdown fixed; demo credentials collapsed behind a Show toggle (hideable via NEXT_PUBLIC_SHOW_DEMO_HINTS=false).
+- A11Y/i18n: pinch-zoom re-enabled (WCAG 1.4.4); <html lang> follows EN/HI; hardcoded "Subtotal"/QR strings/aria-labels moved into the EN+HI dicts; window.open gets noopener.
+- HYGIENE: db/custom.db untracked (gitignored) — no customer data in VCS; /api/auth/users + /api/auth/branches + /api/auth/login + /api/settings deleted (dead since the Firebase migration).
+- VERIFIED in browser: staff login → bill ₹400 (GG1-0065), admin login → GST 18% settings saved → bill ₹300+₹54 GST (GG1-0066) → void with reason → QR menu → Hindi toggle → mobile bottom nav. tsc --noEmit clean (excluding pre-existing examples/ socket.io type gaps), eslint clean.
+
+Stage Summary:
+- 25 files changed, +581/−135. All committed on branch main.
+- Key decision: in-memory rate limiting (no Redis) fits the single-process SQLite deployment; dead-letter approach for offline queue preserves the "never lose a bill" guarantee while stopping infinite retry loops.
+- Remaining known gaps (future work): ₹ glyph in PDF needs an embedded font (uses "Rs."); no customer delete endpoint (GDPR); public menu exposes counters; items have no flat-₹ discount or split payments.
