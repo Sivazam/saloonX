@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet, apiPut } from '@/lib/api-client'
+import { formatINR } from '@/lib/format'
 import type { BranchProfileDTO } from '@/lib/types'
 import { useAppStore } from '@/store/use-app-store'
 import { Button } from '@/components/ui/button'
@@ -610,15 +611,23 @@ export default function SettingsView() {
             />
             <p className="tnum text-[11px] text-muted-foreground">{form.receiptFooter.length}/200</p>
           </div>
-          {/* Live receipt preview */}
+          {/* Live receipt preview — mirrors the actual branch settings
+               (GST %, bill prefix) so owners see the same shape their
+               customers will. Uses formatINR (the same ₹-glyph formatter
+               used on receipts) instead of the old hardcoded "Rs. 150". */}
           <div className="rounded-lg border bg-background p-3">
             <p className="micro mb-2 text-muted-foreground">Preview</p>
             <div className="rounded-md border bg-card p-3 text-center text-xs">
               <p className="font-bold">{form.name || 'Branch name'}</p>
               <p className="text-muted-foreground">{form.address || 'Branch address'}</p>
-              <p className="mt-2 font-semibold">GG1-0042</p>
-              <p className="mt-1 text-muted-foreground">Haircut x1 — Rs. 150</p>
-              <p className="mt-1 font-bold">Total — Rs. 150</p>
+              <p className="mt-2 font-mono font-semibold">{branch.billPrefix}-0042</p>
+              <p className="mt-1 text-muted-foreground">Haircut ×1 — {formatINR(150)}</p>
+              {form.gstEnabled && form.gstPct > 0 && (
+                <p className="mt-0.5 text-muted-foreground">
+                  GST ({form.gstPct}%) — {formatINR((150 * form.gstPct) / 100)}
+                </p>
+              )}
+              <p className="mt-1 font-bold">Total — {formatINR(form.gstEnabled ? 150 * (1 + form.gstPct / 100) : 150)}</p>
               <p className="mt-2 text-muted-foreground">{form.receiptFooter || 'Receipt footer message'}</p>
             </div>
           </div>

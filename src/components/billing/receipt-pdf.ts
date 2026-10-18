@@ -10,13 +10,23 @@ function rs(n: number): string {
   return `Rs. ${n.toLocaleString('en-IN', isInteger ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+/** Split a GST amount into CGST + SGST such that the two halves ALWAYS sum
+ *  back to the original amount (round-then-balance). Halving then displaying
+ *  each half independently can be off by 1 paisa on odd-paisa totals
+ *  (e.g. gst=1.01 → 0.51 + 0.51 = 1.02 ≠ 1.01) — a real GST-filing hazard. */
+function splitGst(gstAmount: number): { cgst: number; sgst: number } {
+  const cgst = Math.round(gstAmount * 100 / 2) / 100
+  return { cgst, sgst: Math.round((gstAmount - cgst) * 100) / 100 }
+}
+
 /** Plain-text receipt for Copy / paste-anywhere (WhatsApp *bold* syntax). */
 export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string {
   const lines: string[] = []
   lines.push(`*${b.name}*`)
   if (b.tenantName && b.tenantName !== b.name) lines.push(b.tenantName)
   if (b.gstin) lines.push(`GSTIN: ${b.gstin}`)
-  lines.push(`Bill ${t.billNo} \u00b7 ${formatDateTime(t.createdAt)}`)
+  const docLabel = t.status === 'VOIDED' ? 'VOID Bill' : 'Bill'
+  lines.push(`${docLabel} ${t.billNo} \u00b7 ${formatDateTime(t.createdAt)}`)
   if (t.customerName || t.customerMobile) {
     lines.push(
       `Customer: ${[t.customerName, t.customerMobile].filter(Boolean).join(' · ')}`,
@@ -30,11 +40,17 @@ export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string
   lines.push(`Subtotal: ${formatINR(t.subtotal)}`)
   if (t.discountPct > 0) lines.push(`Discount (${t.discountPct}%): \u2212${formatINR(t.discountAmount)}`)
   if (t.gstAmount > 0) {
-    lines.push(`CGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(t.gstAmount / 2)}`)
-    lines.push(`SGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(t.gstAmount / 2)}`)
+    const { cgst, sgst } = splitGst(t.gstAmount)
+    lines.push(`CGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(cgst)}`)
+    lines.push(`SGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(sgst)}`)
   }
   lines.push(`*Total: ${formatINR(t.total)}*`)
-  lines.push(`Paid via ${t.paymentMethod}`)
+  if (t.status === 'VOIDED') {
+    lines.push('*VOIDED*')
+    if (t.voidReason) lines.push(`Reason: ${t.voidReason}`)
+  } else {
+    lines.push(`Paid via ${t.paymentMethod}`)
+  }
   if (t.note) lines.push(`Note: ${t.note}`)
   if (b.receiptFooter) lines.push(b.receiptFooter)
   return lines.join('\n')
@@ -105,7 +121,7 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   y += 6
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
-  doc.text(`Bill ${t.billNo}`, M, y)
+  doc.text(`${t.status === 'VOIDED' ? 'VOID Bill' : 'Bill'} ${t.billNo}`, M, y)
   doc.setFont('helvetica', 'normal')
   doc.text(formatDateTime(t.createdAt), right, y, { align: 'right' })
   y += 6.5
@@ -152,24 +168,38 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
     y += 6
   }
   if (t.gstAmount > 0) {
-    // Intra-state sale → tax is split CGST + SGST (half each). Salons bill
-    // within their own state, so the split is always applicable here.
+    // Intra-state sale → tax is split CGST + SGST. Salons bill within their
+    // own state, so the split is always applicable. The two halves are
+    // round-then-balanced so CGST+SGST always reconciles to gstAmount.
+    const { cgst, sgst } = splitGst(t.gstAmount)
     const halfPct = (t.gstPct / 2).toFixed(2).replace(/\.?0+$/, '')
     doc.text(`CGST (${halfPct}%)`, M, y)
-    doc.text(rs(t.gstAmount / 2), right, y, { align: 'right' })
+    doc.text(rs(cgst), right, y, { align: 'right' })
     y += 6
     doc.text(`SGST (${halfPct}%)`, M, y)
-    doc.text(rs(t.gstAmount / 2), right, y, { align: 'right' })
+    doc.text(rs(sgst), right, y, { align: 'right' })
     y += 6
   }
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.text('Total', M, y)
+  doc.text(t.status === 'VOIDED' ? 'Total (VOIDED)' : 'Total', M, y)
   doc.text(rs(t.total), right, y, { align: 'right' })
   y += 7
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
-  doc.text(`Paid via ${t.paymentMethod}`, M, y)
+  if (t.status === 'VOIDED') {
+    doc.setTextColor(180, 30, 30)
+    doc.text('Cancelled — no amount due', M, y)
+    if (t.voidReason) {
+      y += 5
+      const wrapped = doc.splitTextToSize(`Reason: ${t.voidReason}`, W - M * 2)
+      doc.text(wrapped, M, y)
+      y += wrapped.length * 4.5
+    }
+    doc.setTextColor(0)
+  } else {
+    doc.text(`Paid via ${t.paymentMethod}`, M, y)
+  }
   y += 8
 
   // Bill note (optional)
@@ -196,6 +226,22 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
       y = 20
     }
     doc.text(wrapped, W / 2, y, { align: 'center' })
+  }
+
+  // VOIDED watermark — a diagonal red stamp across every page so a voided
+  // bill can never be mistaken for a valid receipt (audit/GST compliance).
+  if (t.status === 'VOIDED') {
+    const pageCount = doc.getNumberOfPages()
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p)
+      doc.setTextColor(200, 40, 40)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(56)
+      doc.text('VOID', W / 2, 105, { align: 'center', angle: 35 })
+      doc.setTextColor(0)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+    }
   }
 
   return doc

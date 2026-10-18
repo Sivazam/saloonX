@@ -236,7 +236,7 @@ export interface PublicMenuResponse {
   tenant: { name: string; logo: string | null }
   offer: { pct: number } | null
   categories: PublicMenuCategoryDTO[]
-  stats: { customers: number; bills: number }
+  stats: { services: number }
   slug: string
 }
 

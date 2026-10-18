@@ -405,17 +405,43 @@ export default function TransactionsView() {
     setRange(computePreset('30d'))
   }
 
-  function exportCsv() {
+  // Exporting state mirrors the expenses view: blocks re-clicks and shows a
+  // spinner on the CSV button. fetch+blob+<a download> survives popup
+  // blockers (window.open('/api/export/csv') does not, on iOS Safari and on
+  // most desktop browsers in stricter popup-blocking modes).
+  const [exportingCsv, setExportingCsv] = useState(false)
+
+  async function exportCsv() {
+    if (exportingCsv) return
+    setExportingCsv(true)
     toast('Preparing CSV…')
-    // The CSV must mirror the on-screen filters exactly (method, staff,
-    // search, branch) — otherwise the export silently disagrees with the
-    // ledger the owner is looking at.
-    const p = new URLSearchParams({ from: range.from, to: range.to })
-    if (method) p.set('method', method)
-    if (staffId !== 'all') p.set('staffId', staffId)
-    if (branchFilter !== 'all') p.set('branchId', branchFilter)
-    if (debouncedSearch) p.set('search', debouncedSearch)
-    window.open(`/api/export/csv?${p.toString()}`, '_blank', 'noopener')
+    try {
+      // The CSV must mirror the on-screen filters exactly (method, staff,
+      // search, branch) — otherwise the export silently disagrees with the
+      // ledger the owner is looking at.
+      const p = new URLSearchParams({ from: range.from, to: range.to })
+      if (method) p.set('method', method)
+      if (staffId !== 'all') p.set('staffId', staffId)
+      if (branchFilter !== 'all') p.set('branchId', branchFilter)
+      if (debouncedSearch) p.set('search', debouncedSearch)
+      // Authorised via the session cookie — same fetch as any other API call.
+      const res = await fetch(`/api/export/csv?${p.toString()}`)
+      if (!res.ok) throw new Error('Could not prepare the CSV')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `saloonx-bills-${range.from}-to-${range.to}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Bills CSV downloaded', {
+        description: 'Mirrors the filters above (voided bills included for audit).',
+      })
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setExportingCsv(false)
+    }
   }
 
   function exportPdf() {
@@ -449,8 +475,8 @@ export default function TransactionsView() {
           <div className="flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" onClick={exportCsv}>
-                  <Download aria-hidden />
+                <Button variant="outline" size="sm" onClick={() => void exportCsv()} disabled={exportingCsv}>
+                  {exportingCsv ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download aria-hidden />}
                   <span className="hidden sm:inline">CSV</span>
                 </Button>
               </TooltipTrigger>
@@ -604,7 +630,22 @@ export default function TransactionsView() {
           <EmptyState
             icon={ReceiptText}
             title="No bills found"
-            hint="Try widening the date range or clearing the filters."
+            hint={
+              debouncedSearch || method || staffId !== 'all' || branchFilter !== 'all'
+                ? 'No bills match the current filters — try widening the date range or clearing them.'
+                : 'No bills in this date range yet. Once a bill is rung up on the Billing screen, it appears here.'
+            }
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1 gap-1.5"
+                onClick={resetFilters}
+              >
+                <RotateCcw className="size-4" aria-hidden />
+                Reset filters
+              </Button>
+            }
           />
         </div>
       ) : (

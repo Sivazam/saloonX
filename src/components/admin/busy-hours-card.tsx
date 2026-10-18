@@ -8,7 +8,13 @@ import { formatINR } from '@/lib/format'
 import type { HoursStatsResponse } from '@/lib/types'
 import { Skeleton } from '@/components/ui/skeleton'
 
-/* ── Busy hours heatmap — weekday × hour bill density ──────────────────── */
+/* ── Busy hours heatmap — weekday × hour bill density ────────────────────
+ * Accessibility: the grid is one tab stop. Each cell is `role="gridcell"`
+ * with `tabindex="-1"` and an `aria-label` so screen readers can announce
+ * "Mon 9a–10a, 4 bills, ₹1,200" but the keyboard user is not forced to walk
+ * 98 cells to get past the card. A textual summary at the bottom carries
+ * the peak + busiest-day information for users who skip the grid entirely.
+ */
 
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const HOUR_MIN = 8
@@ -55,6 +61,19 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
     return maxI
   }, [data])
 
+  // Top-5 hottest slots — flat, screen-reader-friendly summary at the bottom
+  // of the card. Memoised alongside the other grid derivations so all hooks
+  // run unconditionally before the early returns below.
+  const topCells = useMemo(
+    () =>
+      [...(data?.cells ?? [])]
+        .filter((c) => c.bills > 0)
+        .sort((a, b) => b.bills - a.bills)
+        .slice(0, 5)
+        .map((c) => `${DOW[c.dow]} ${hourTitle(c.hour)} with ${c.bills} bills (${formatINR(c.revenue)})`),
+    [data],
+  )
+
   if (loading || !data) {
     return (
       <section className="hairline rounded-xl bg-card">
@@ -73,6 +92,11 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
   const peak = data.peak
   const busiestDay = data.dowTotals[maxDow]
   const peakHour = [...data.hourTotals].sort((a, b) => b.bills - a.bills)[0]
+
+  // Grid layout: weekday-label column + HOURS.length hour columns + per-day total column.
+  const colCount = HOURS.length + 2
+  // Grid rows: hour-axis row + DOW.length day rows + hour-totals rail row.
+  const rowCount = 1 + DOW.length + 1
 
   return (
     <motion.section
@@ -99,17 +123,30 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
         )}
       </div>
 
-      {/* Heatmap grid: hour columns × weekday rows */}
+      {/* Heatmap grid: hour columns × weekday rows. role="grid" + aria
+          counts make it a single tab-stop for keyboard users — cells are
+          `tabindex="-1"` so the screen-reader still announces each cell's
+          aria-label without adding 98 tab stops. */}
       <div className="mt-4 overflow-x-auto pb-1">
-        <div className="min-w-[560px]">
-          {/* Hour axis */}
+        <div
+          className="min-w-[600px]"
+          role="grid"
+          aria-rowcount={rowCount}
+          aria-colcount={colCount}
+          aria-label={`Busy hours heatmap, ${DOW.length} days × ${HOURS.length} hours`}
+          aria-describedby="busy-hours-summary"
+        >
+          {/* Hour axis (row 1) */}
           <div
+            role="row"
+            aria-rowindex={1}
             className="grid gap-[3px] pl-9 pr-9"
             style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(0, 1fr))` }}
           >
             {HOURS.map((h) => (
               <span
                 key={h}
+                role="columnheader"
                 className="tnum text-center text-[10px] font-medium text-muted-foreground"
                 title={hourTitle(h)}
               >
@@ -118,14 +155,15 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
             ))}
           </div>
 
-          {/* Rows */}
+          {/* Day rows */}
           <div className="mt-1 flex flex-col gap-[3px]">
             {DOW.map((label, dow) => {
               const dayTotal = data.dowTotals[dow]
               const isPeakDay = dow === maxDow
               return (
-                <div key={label} className="flex items-center gap-1">
+                <div role="row" aria-rowindex={dow + 2} key={label} className="flex items-center gap-1">
                   <span
+                    role="rowheader"
                     className={cn(
                       'w-8 shrink-0 text-right text-[11px] font-semibold',
                       isPeakDay ? 'text-primary' : 'text-muted-foreground',
@@ -145,46 +183,51 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
                           : 0.15 + 0.85 * Math.sqrt(cell.bills / maxBills)
                       const isPeakCell = peak?.dow === dow && peak?.hour === h && peak.bills > 0
                       const isHovered = hovered === `${dow}-${h}`
+                      // Empty cells (0 bills) carry no label so the SR doesn't
+                      // announce 60+ "0 bills" entries; only non-empty cells
+                      // are gridcells with labels.
+                      if (cell.bills === 0) {
+                        return (
+                          <span
+                            key={h}
+                            role="gridcell"
+                            tabIndex={-1}
+                            aria-hidden={isHovered ? undefined : true}
+                            className="h-9 rounded-[5px] border border-border/60 bg-muted/40"
+                          />
+                        )
+                      }
                       return (
-                        <button
+                        <span
                           key={h}
-                          type="button"
+                          role="gridcell"
+                          tabIndex={-1}
+                          aria-label={`${label} ${hourTitle(h)}: ${cell.bills} bills, ${formatINR(cell.revenue)}`}
                           className={cn(
-                            'group relative h-7 rounded-[5px] border transition-all duration-150',
-                            cell.bills === 0
-                              ? 'border-border/60 bg-muted/40'
-                              : 'border-transparent',
+                            'group relative h-9 cursor-default rounded-[5px] border transition-all duration-150',
+                            'border-transparent',
                             isPeakCell && 'ring-2 ring-amber-500 ring-offset-1 ring-offset-card',
                             isHovered && 'z-10 scale-[1.18] shadow-md',
                           )}
-                          style={
-                            cell.bills > 0
-                              ? { backgroundColor: `rgb(190 24 93 / ${intensity})` }
-                              : undefined
-                          }
+                          style={{ backgroundColor: `rgb(190 24 93 / ${intensity})` }}
                           onMouseEnter={() => setHovered(`${dow}-${h}`)}
                           onMouseLeave={() => setHovered(null)}
-                          onFocus={() => setHovered(`${dow}-${h}`)}
-                          onBlur={() => setHovered(null)}
-                          aria-label={`${label} ${hourTitle(h)}: ${cell.bills} bills, ${formatINR(cell.revenue)}`}
                         >
-                          {/* Hover tooltip */}
+                          {/* Hover tooltip (mouse only — focus is removed for a11y) */}
                           {isHovered && cell.bills > 0 && (
                             <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-[10px] font-semibold text-popover-foreground shadow-lg">
                               {cell.bills} bill{cell.bills > 1 ? 's' : ''} · {formatINR(cell.revenue)}
                             </span>
                           )}
-                          {cell.bills > 0 && (
-                            <span
-                              className={cn(
-                                'tnum absolute inset-0 flex items-center justify-center text-[10px] font-bold',
-                                intensity > 0.55 ? 'text-white' : 'text-foreground/70',
-                              )}
-                            >
-                              {cell.bills}
-                            </span>
-                          )}
-                        </button>
+                          <span
+                            className={cn(
+                              'tnum absolute inset-0 flex items-center justify-center text-[10px] font-bold',
+                              intensity > 0.55 ? 'text-white' : 'text-foreground/70',
+                            )}
+                          >
+                            {cell.bills}
+                          </span>
+                        </span>
                       )
                     })}
                   </div>
@@ -256,6 +299,21 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
           </span>
         )}
       </div>
+
+      {/* Screen-reader summary — visually hidden, but carries the peak +
+          top-5 hottest slots so keyboard/SR users get the same takeaway
+          as the visual heatmap. */}
+      <p id="busy-hours-summary" className="sr-only">
+        {peak && peak.bills > 0
+          ? `Busiest slot is ${DOW[peak.dow]} ${hourTitle(peak.hour)} with ${peak.bills} bills. `
+          : ''}
+        {peakHour && peakHour.bills > 0
+          ? `Rush hour is ${hourTitle(peakHour.hour)}. `
+          : ''}
+        {topCells.length > 0
+          ? `Top slots: ${topCells.join('; ')}.`
+          : ''}
+      </p>
     </motion.section>
   )
 }

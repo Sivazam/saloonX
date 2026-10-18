@@ -186,6 +186,11 @@ async function runBillTransaction(
     })
     const billNo = `${bumped.billPrefix}-${String(bumped.billCounter).padStart(4, "0")}`
 
+    // The bill's true local timestamp — clamped clientCreatedAt for offline
+    // bills, else now. Customer aggregates (lastVisitAt, BranchVisit.visitedAt)
+    // must reflect WHEN the customer actually came in, not sync-time.
+    const billTime = createdAt ?? new Date()
+
     // Customers are franchise-wide — recognised at any branch of the chain.
     let customer: { id: string; mobile: string; name: string | null } | null = null
     if (customerMobile) {
@@ -197,30 +202,21 @@ async function runBillTransaction(
           name: customerName || null,
           visits: 1,
           totalSpend: total,
-          lastVisitAt: new Date(),
+          lastVisitAt: billTime,
         },
         update: {
           visits: { increment: 1 },
           totalSpend: { increment: total },
-          lastVisitAt: new Date(),
+          lastVisitAt: billTime,
           ...(customerName ? { name: customerName } : {}),
         },
       })
       // Track which branches this customer has visited (profile colour).
       await tx.branchVisit.upsert({
         where: { customerId_branchId: { customerId: customer.id, branchId: branch.id } },
-        create: { customerId: customer.id, branchId: branch.id, branchName: branch.name, visitedAt: new Date() },
-        update: {},
+        create: { customerId: customer.id, branchId: branch.id, branchName: branch.name, visitedAt: billTime },
+        update: { visitedAt: billTime },
       })
-
-      // Any discounted bill redeems the customer's QR-menu signup offer —
-      // the guest showed their code, the salon honoured it.
-      if (discountPct > 0) {
-        await tx.menuLead.updateMany({
-          where: { customerId: customer.id, redeemedAt: null },
-          data: { redeemedAt: new Date() },
-        })
-      }
     }
 
     const transaction = await tx.transaction.create({
@@ -266,6 +262,23 @@ async function runBillTransaction(
       },
       include: { items: true },
     })
+
+    // A discounted bill honours the customer's QR-menu signup offer — but ONLY
+    // one lead at THIS branch (never every lead the customer has across the
+    // whole franchise). The redeemed lead is linked back to this transaction
+    // so a later void can surgically un-redeem it without touching other leads.
+    if (discountPct > 0 && customer) {
+      const lead = await tx.menuLead.findFirst({
+        where: { customerId: customer.id, branchId: branch.id, redeemedAt: null },
+        orderBy: { createdAt: "desc" },
+      })
+      if (lead) {
+        await tx.menuLead.update({
+          where: { id: lead.id },
+          data: { redeemedAt: billTime, redeemedByTransactionId: transaction.id },
+        })
+      }
+    }
 
     const freshBranch = await tx.branch.findUnique({
       where: { id: branch.id },

@@ -2,13 +2,14 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
+import { DATA_URL_IMAGE_REGEX } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
 const updateSchema = z.object({
   id: z.string().min(1),
   name: z.string().trim().min(2, "Franchise name is too short").max(60).optional(),
-  logo: z.string().startsWith("data:image/").max(400_000).optional().nullable(),
+  logo: z.string().regex(DATA_URL_IMAGE_REGEX, "Logo must be a PNG/JPEG/WebP data URL").max(400_000).optional().nullable(),
   active: z.boolean().optional(),
 })
 

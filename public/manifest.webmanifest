@@ -1,12 +1,18 @@
 {
+  "id": "/?source=pwa",
   "name": "SaloonX — Salon Billing",
   "short_name": "SaloonX",
-  "description": "Ultra-simple salon billing for Indian salons — bill in seconds, UPI QR receipts, reports and staff management.",
-  "start_url": "/",
+  "description": "Ultra-simple salon billing for Indian salons — bill in seconds, UPI QR receipts, reports and staff management. Multi-branch, offline-friendly, bilingual.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#FBF7F2",
   "theme_color": "#5E1A2C",
   "orientation": "portrait-primary",
+  "lang": "en-IN",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "shopping", "finance"],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -26,5 +32,23 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "New Bill",
+      "short_name": "Bill",
+      "description": "Start a new customer bill",
+      "url": "/?action=billing&source=pwa",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Reports",
+      "description": "View sales, transactions and reports",
+      "url": "/?view=dashboard&source=pwa",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
 }

@@ -77,6 +77,15 @@ export async function PUT(request: Request) {
       })
     }
 
+    // Un-redeem the QR-menu signup offer this bill honoured — the customer's
+    // coupon code becomes valid again so the salon can re-apply it next time.
+    // Surgically linked via redeemedByTransactionId (not every lead the
+    // customer has — only the one this specific bill consumed).
+    await tx.menuLead.updateMany({
+      where: { redeemedByTransactionId: id },
+      data: { redeemedAt: null, redeemedByTransactionId: null },
+    })
+
     const fresh = await tx.transaction.findUniqueOrThrow({ where: { id }, include: { items: true } })
     return { transaction: fresh }
   })

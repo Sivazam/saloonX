@@ -287,7 +287,9 @@ model AnnouncementRead {
 
 // A customer who registered via the public QR menu to claim a first-visit
 // discount. The code is shown at the counter; it auto-redeems on the first
-// discounted bill (see POST /api/transactions).
+// discounted bill at THIS branch (see POST /api/transactions) — one lead per
+// bill, never all of a customer's leads across branches. Voiding the bill
+// un-redeems the lead via `redeemedByTransactionId` so the offer survives.
 model MenuLead {
   id         String    @id @default(cuid())
   code       String    @unique
@@ -301,8 +303,12 @@ model MenuLead {
   pct        Int
   createdAt  DateTime  @default(now())
   redeemedAt DateTime?
+  /** The bill that honoured this lead — set on redemption so a void can
+      surgically un-redeem ONLY this lead (not every lead the customer has). */
+  redeemedByTransactionId String?
 
   @@index([tenantId, mobile])
   @@index([branchId, mobile, createdAt])
   @@index([customerId])
+  @@index([redeemedByTransactionId])
 }

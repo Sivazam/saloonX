@@ -122,11 +122,15 @@ export function EmptyState({
   icon: Icon,
   title,
   hint,
+  action,
   className,
 }: {
   icon: LucideIcon
   title: string
   hint?: string
+  /** Optional CTA — typically a `<Button>` to reset filters / create the first
+   *  row / jump to the relevant view. Renders below the copy. */
+  action?: React.ReactNode
   className?: string
 }) {
   return (
@@ -138,6 +142,7 @@ export function EmptyState({
         <p className="text-sm font-semibold">{title}</p>
         {hint && <p className="mx-auto max-w-xs text-xs text-muted-foreground">{hint}</p>}
       </div>
+      {action}
     </div>
   )
 }

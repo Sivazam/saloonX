@@ -12,9 +12,12 @@ export async function POST() {
     await db.session.deleteMany({ where: { token } }).catch(() => {})
   }
   const response = NextResponse.json({ ok: true })
+  // Mirror the login cookie flags exactly — a mismatched SameSite/Secure on
+  // the delete would leave a stranded cookie on the client (Safari is strict).
   response.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
     sameSite: "lax",
+    secure: process.env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIES === "1",
     path: "/",
     maxAge: 0,
   })

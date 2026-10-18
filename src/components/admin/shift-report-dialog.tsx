@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
   Banknote,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -25,6 +26,7 @@ import type { ShiftReportResponse } from '@/lib/types'
 import { useAppStore } from '@/store/use-app-store'
 import { canShareFiles } from '@/components/billing/receipt-pdf'
 import { shiftReportFile, downloadShiftReportPdf, type ReportContext } from './report-pdf'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -40,6 +42,152 @@ const METHODS = [
   { key: 'UPI', label: 'UPI', icon: QrCode, bar: 'bg-amber-500' },
   { key: 'CARD', label: 'Card', icon: CreditCard, bar: 'bg-rose-400' },
 ] as const
+
+/* ── Till-count denomination calculator ────────────────────────────────────
+ * Staff count the cash drawer at end-of-shift. This grid lets them punch in
+ * the number of each note/coin they're holding; the running sum is compared
+ * to the day's `cashCollected` so they can spot a shortfall or surplus
+ * before the manager signs off the handover.
+ */
+const DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1] as const
+
+function formatDenom(d: number): string {
+  // ₹2000 → "₹2000", ₹5 → "₹5"
+  return `₹${d}`
+}
+
+function TillCountCard({ expectedCash }: { expectedCash: number }) {
+  const [open, setOpen] = useState(false)
+  // One string-state per denomination so the staff can type freely without
+  // the inputs re-coercing to numbers under their cursor.
+  const [counts, setCounts] = useState<Record<number, string>>(() => {
+    const seed: Record<number, string> = {}
+    for (const d of DENOMINATIONS) seed[d] = ''
+    return seed
+  })
+
+  const countedTotal = useMemo(
+    () =>
+      DENOMINATIONS.reduce((sum, d) => {
+        const n = Number(counts[d] || 0)
+        return Number.isFinite(n) ? sum + n * d : sum
+      }, 0),
+    [counts],
+  )
+
+  const delta = countedTotal - expectedCash
+  const deltaState =
+    Math.abs(delta) < 0.005 ? 'match' : delta > 0 ? 'surplus' : 'shortfall'
+
+  const totalNotes = DENOMINATIONS.reduce(
+    (n, d) => n + (Number(counts[d] || 0) || 0),
+    0,
+  )
+
+  function setCount(d: number, v: string) {
+    // Whole-number, non-negative only. Coins allow zero, blanks are empty.
+    const clean = v.replace(/[^\d]/g, '').slice(0, 5)
+    setCounts((s) => ({ ...s, [d]: clean }))
+  }
+
+  return (
+    <div className="hairline overflow-hidden rounded-xl bg-card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/40"
+      >
+        <Banknote className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">Count the till</p>
+          <p className="text-[11px] text-muted-foreground">
+            Tally your notes & coins · expected {formatINR(expectedCash)}
+          </p>
+        </div>
+        {open && (
+          <span
+            className={cn(
+              'tnum shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold',
+              deltaState === 'match' && 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+              deltaState === 'surplus' && 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+              deltaState === 'shortfall' && 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+            )}
+          >
+            {deltaState === 'match'
+              ? '✓ match'
+              : `${delta > 0 ? '+' : '−'}${formatINR(Math.abs(delta))}`}
+          </span>
+        )}
+        <ChevronDown
+          className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="border-t bg-muted/30 px-3.5 py-3"
+        >
+          <div className="grid grid-cols-2 gap-1.5">
+            {DENOMINATIONS.map((d) => (
+              <label
+                key={d}
+                className="flex items-center justify-between gap-1.5 rounded-lg border bg-card px-2 py-1.5"
+              >
+                <span className="tnum text-xs font-semibold">{formatDenom(d)}</span>
+                <span className="text-[10px] text-muted-foreground">×</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={counts[d]}
+                  onChange={(e) => setCount(d, e.target.value)}
+                  placeholder="0"
+                  aria-label={`Count of ${formatDenom(d)} notes or coins`}
+                  className="tnum w-12 rounded border bg-background px-1.5 py-0.5 text-right text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="mt-2.5 flex items-center justify-between border-t pt-2 text-xs">
+            <span className="text-muted-foreground">
+              Counted total
+              {totalNotes > 0 && (
+                <span className="ml-1.5 text-[10px]">· {totalNotes} notes/coins</span>
+              )}
+            </span>
+            <span className="tnum font-bold">{formatINR(countedTotal)}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Expected (from cash bills)</span>
+            <span className="tnum text-muted-foreground">{formatINR(expectedCash)}</span>
+          </div>
+          <div
+            className={cn(
+              'mt-2 flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs font-semibold',
+              deltaState === 'match' && 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+              deltaState === 'surplus' && 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+              deltaState === 'shortfall' && 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+            )}
+          >
+            <span>{deltaState === 'match' ? 'Till balances' : deltaState === 'surplus' ? 'Surplus' : 'Shortfall'}</span>
+            <span className="tnum">
+              {deltaState === 'match'
+                ? formatINR(0)
+                : `${delta > 0 ? '+' : '−'}${formatINR(Math.abs(delta))}`}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+            Tip: leave the count blank for denominations you don’t have. The manager signs the printed
+            PDF only when the till is balanced or the difference is explained.
+          </p>
+        </motion.div>
+      )}
+    </div>
+  )
+}
 
 /**
  * One staff member's day — the numbers they hand over at shift end.
@@ -273,6 +421,11 @@ export function ShiftReportDialog({
                 )}
               </div>
             </div>
+
+            {/* Till-count denomination calculator (collapsible).
+                 Staff count their drawer before handing over — the delta vs
+                 expected cash highlights any shortfall/surplus up front. */}
+            <TillCountCard expectedCash={shift.summary.cashCollected} />
 
             {/* Bill list */}
             <div className="hairline overflow-hidden rounded-xl bg-card">

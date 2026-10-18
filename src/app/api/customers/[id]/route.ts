@@ -57,31 +57,61 @@ function validBirthday(v: string): boolean {
 }
 
 /**
- * PUT /api/customers/[id] — ADMIN only. Edit a customer's name and birthday.
- * Birthday is a recurring "MM-DD" (null clears it) — powers the reminder list.
+ * PUT /api/customers/[id] — ADMIN only. Edit a customer's name, mobile and
+ * birthday. Mobile is the @@unique([tenantId, mobile]) key — a typo at billing
+ * time orphaned this customer permanently before this endpoint existed.
+ *
+ * Mobile change rules:
+ *  - must be a clean 10-digit Indian mobile (same regex as branch.ownerMobile)
+ *  - if the new mobile already belongs to ANOTHER customer in this tenant,
+ *    we refuse — caller must use the merge flow (out of scope here) to avoid
+ *    silently moving bills onto the wrong profile.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(["ADMIN"])
   if (!auth.user) return auth.response
 
   const { id } = await params
-  const customer = await db.customer.findUnique({ where: { id }, select: { tenantId: true } })
+  const customer = await db.customer.findUnique({ where: { id }, select: { tenantId: true, mobile: true } })
   if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 })
   if (auth.user.role !== "SUPER_ADMIN" && customer.tenantId !== auth.user.tenantId) {
     return NextResponse.json({ error: "No access to this customer" }, { status: 403 })
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { name?: unknown; birthday?: unknown; wishSent?: unknown }
+    | { name?: unknown; mobile?: unknown; birthday?: unknown; wishSent?: unknown }
     | null
   if (!body) return NextResponse.json({ error: "Invalid body" }, { status: 400 })
 
-  const data: { name?: string | null; birthday?: string | null; lastWishAt?: Date } = {}
+  const data: { name?: string | null; mobile?: string; birthday?: string | null; lastWishAt?: Date } = {}
 
   if (body.name !== undefined) {
     const name = typeof body.name === "string" ? body.name.trim() : ""
     if (name.length > 60) return NextResponse.json({ error: "Name is too long" }, { status: 400 })
     data.name = name || null
+  }
+
+  if (body.mobile !== undefined) {
+    const mobile = typeof body.mobile === "string" ? body.mobile.trim() : ""
+    // Empty/null mobile is NOT allowed — the customer key requires a mobile.
+    if (!/^\d{10}$/.test(mobile)) {
+      return NextResponse.json({ error: "Mobile must be exactly 10 digits" }, { status: 400 })
+    }
+    if (mobile !== customer.mobile) {
+      // Reject silent hijack: if the new mobile already exists on a DIFFERENT
+      // customer in the same tenant, the admin must merge profiles explicitly.
+      const clash = await db.customer.findFirst({
+        where: { tenantId: customer.tenantId, mobile, NOT: { id } },
+        select: { id: true },
+      })
+      if (clash) {
+        return NextResponse.json(
+          { error: "Another customer already uses this mobile — merge profiles instead of overwriting." },
+          { status: 409 },
+        )
+      }
+      data.mobile = mobile
+    }
   }
 
   if (body.birthday !== undefined) {
@@ -109,4 +139,63 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     include: { branchVisits: { orderBy: { visitedAt: "desc" }, select: { branchName: true } } },
   })
   return NextResponse.json({ customer: toCustomerDTO(updated) })
+}
+
+/**
+ * DELETE /api/customers/[id] — ADMIN only. GDPR / DPDP "right to erasure".
+ *
+ * PII is anonymised IN PLACE rather than the row being hard-deleted: the
+ * financial ledger (Transaction rows) must be retained for GST/tax audits
+ * (Indian law: 6 years), and those rows carry a snapshot of the customer's
+ * name + mobile at billing time. We:
+ *   1. wipe the live customer PII (name, birthday, lastWishAt, branch visits),
+ *   2. mask the live mobile to "<erased>" so it can no longer be looked up,
+ *   3. anonymise the customer-name snapshot on every historical bill of this
+ *      customer (mobile stays on the bill for audit, but is masked unless the
+ *      admin explicitly confirms — see `keepHistoryMobile`).
+ * The customer row stays so void/redeem logic and FK integrity hold, but is
+ * effectively a tombstone with no recoverable PII.
+ */
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser(["ADMIN"])
+  if (!auth.user) return auth.response
+
+  const url = new URL(request.url)
+  const keepHistoryMobile = url.searchParams.get("keepHistoryMobile") === "1"
+
+  const { id } = await params
+  const customer = await db.customer.findUnique({ where: { id }, select: { tenantId: true } })
+  if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 })
+  if (auth.user.role !== "SUPER_ADMIN" && customer.tenantId !== auth.user.tenantId) {
+    return NextResponse.json({ error: "No access to this customer" }, { status: 403 })
+  }
+
+  await db.$transaction(async (tx) => {
+    // 1) Drop the branch-visit colour rows — pure PII, no audit value.
+    await tx.branchVisit.deleteMany({ where: { customerId: id } })
+    // 2) Drop this customer's unredeemed QR-menu leads (mobile + name PII).
+    await tx.menuLead.deleteMany({ where: { customerId: id, redeemedAt: null } })
+    // 3) Tombstone the customer row itself.
+    await tx.customer.update({
+      where: { id },
+      data: {
+        name: null,
+        birthday: null,
+        lastWishAt: null,
+        mobile: "<erased>",
+      },
+    })
+    // 4) Anonymise the customer-name snapshot on historical bills (audit
+    //    needs the amount + items, not the customer's name). Mobile is kept
+    //    on the bill unless the admin explicitly asked to scrub it too.
+    await tx.transaction.updateMany({
+      where: { customerId: id },
+      data: {
+        customerName: null,
+        ...(keepHistoryMobile ? {} : { customerMobile: null }),
+      },
+    })
+  })
+
+  return NextResponse.json({ ok: true })
 }

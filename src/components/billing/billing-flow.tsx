@@ -168,10 +168,20 @@ export default function BillingFlow() {
   const [pendingQueueBill, setPendingQueueBill] = useState<QueuedBill | null>(null)
 
   /** Network-level failure → the bill still gets saved: enqueue it locally
-   *  and show the success screen with an "offline — will sync" banner. */
-  const saveOffline = (method: PaymentMethod) => {
+   *  and show the success screen with an "offline — will sync" banner.
+   *
+   *  CRITICAL: this MUST accept a clientRequestId/clientCreatedAt generated
+   *  BEFORE the online POST attempt — if the server actually saved the bill
+   *  but the network response was lost, the offline queue reuses the SAME
+   *  idempotency key so the server's P2002 catch replays the winner instead
+   *  of creating a duplicate bill. (Earlier code generated a fresh key here,
+   *  which double-billed every time the network died mid-save.) */
+  const saveOffline = (
+    method: PaymentMethod,
+    clientRequestId: string,
+    clientCreatedAt: Date,
+  ) => {
     const branchProfile = branchQuery.data?.branch
-    const now = new Date()
     const items = cart.map((c) =>
       c.custom
         ? { name: c.name, price: c.price, qty: c.qty }
@@ -183,13 +193,12 @@ export default function BillingFlow() {
     const gstAmount = round2(((subtotal - discountAmount) * gstPct) / 100)
     const total = round2(subtotal - discountAmount + gstAmount)
 
-    const clientRequestId = newRequestId()
     const body: Record<string, unknown> = {
       items,
       discountPct,
       paymentMethod: method,
       clientRequestId,
-      clientCreatedAt: now.toISOString(),
+      clientCreatedAt: clientCreatedAt.toISOString(),
     }
     if (note.trim()) body.note = note.trim()
     if (!walkIn && keypad.digits.length === 10 && fetchedMobile === keypad.digits) {
@@ -209,11 +218,11 @@ export default function BillingFlow() {
             ? `${cart[0].name}${cart[0].qty > 1 ? ` ×${cart[0].qty}` : ''}`
             : `${cart[0].name} +${cart.length - 1} more`,
         branchName: currentBranch?.name ?? '',
-        createdAt: now.toISOString(),
+        createdAt: clientCreatedAt.toISOString(),
       },
       attempts: 0,
       lastError: null,
-      queuedAt: now.toISOString(),
+      queuedAt: clientCreatedAt.toISOString(),
     }
     void enqueueBill(bill)
 
@@ -240,7 +249,7 @@ export default function BillingFlow() {
       status: 'PENDING_SYNC',
       voidedAt: null,
       voidReason: null,
-      createdAt: now.toISOString(),
+      createdAt: clientCreatedAt.toISOString(),
       items: cart.map((c, i) => ({
         id: `local-${i}`,
         serviceId: c.custom ? null : c.serviceId,
@@ -266,10 +275,16 @@ export default function BillingFlow() {
     if (submitting || cart.length === 0) return
     // No internet → don't even try: queue and succeed locally.
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      saveOffline(method)
+      saveOffline(method, newRequestId(), new Date())
       return
     }
     setSubmitting(true)
+    // Generate the idempotency key + true local time BEFORE the request so a
+    // network failure mid-save (TypeError / offline) reuses the SAME key when
+    // falling back to the offline queue — the server's replay guard then
+    // returns the original bill instead of double-billing.
+    const clientRequestId = newRequestId()
+    const clientCreatedAt = new Date()
     try {
       const body: Record<string, unknown> = {
         items: cart.map((c) =>
@@ -279,6 +294,8 @@ export default function BillingFlow() {
         ),
         discountPct,
         paymentMethod: method,
+        clientRequestId,
+        clientCreatedAt: clientCreatedAt.toISOString(),
       }
       if (note.trim()) body.note = note.trim()
       if (!walkIn && keypad.digits.length === 10 && fetchedMobile === keypad.digits) {
@@ -305,7 +322,7 @@ export default function BillingFlow() {
       // network failure rather than matching fragile message strings.
       const offlineNow = typeof navigator !== 'undefined' && !navigator.onLine
       if (offlineNow || e instanceof TypeError) {
-        saveOffline(method)
+        saveOffline(method, clientRequestId, clientCreatedAt)
         return
       }
       toast.error(e instanceof Error ? e.message : L.couldNotSave)

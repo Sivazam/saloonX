@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "This menu link is not available" }, { status: 404 })
   }
 
-  const [categories, overrides, popularRows, customers, bills] = await Promise.all([
+  const [categories, overrides, popularRows] = await Promise.all([
     db.category.findMany({
       where: { tenantId: branch.tenantId },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -66,10 +66,6 @@ export async function GET(request: Request) {
         },
       },
       select: { serviceName: true, qty: true },
-    }),
-    db.customer.count({ where: { tenantId: branch.tenantId } }),
-    db.transaction.count({
-      where: { branchId: branch.id, status: "COMPLETED" },
     }),
   ])
 
@@ -120,7 +116,10 @@ export async function GET(request: Request) {
     tenant: { name: branch.tenant.name, logo: branch.tenant.logo },
     offer: branch.menuOfferPct > 0 ? { pct: branch.menuOfferPct } : null,
     categories: menuCategories,
-    stats: { customers, bills },
+    // NOTE: do NOT expose customer/bill counts publicly — that's competitor
+    // intelligence + bill-counter prediction. Only the service catalogue size
+    // (already public via the categories array) is shared.
+    stats: { services: serviceCount },
     slug,
   }
 

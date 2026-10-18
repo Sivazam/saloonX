@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
 import { createFirebaseUser, deleteFirebaseUser, friendlyAuthMessage } from "@/lib/firebase-rest"
 import { round2, toTenantDTO } from "@/lib/serialize"
+import { DATA_URL_IMAGE_REGEX } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
@@ -104,7 +105,7 @@ export async function GET() {
 
 const createSchema = z.object({
   name: z.string().trim().min(2, "Franchise name is too short").max(60),
-  logo: z.string().startsWith("data:image/").max(400_000).optional().nullable(),
+  logo: z.string().regex(DATA_URL_IMAGE_REGEX, "Logo must be a PNG/JPEG/WebP data URL").max(400_000).optional().nullable(),
   firstBranch: z.object({
     name: z.string().trim().min(2, "Branch name is too short").max(60),
     city: z.string().trim().min(2, "City is too short").max(40),

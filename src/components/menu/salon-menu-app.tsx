@@ -25,6 +25,7 @@ import {
   Percent,
   Phone,
   Search,
+  Sparkles,
   Ticket,
   X,
 } from 'lucide-react'
@@ -153,9 +154,9 @@ function Hero({
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-stone-200">
             <Ticket className="size-3.5 text-amber-200" /> {services}+ services
           </span>
-          {data.stats.customers > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-stone-200">
-              < Flame className="size-3.5 text-amber-200" /> {data.stats.customers} happy customers
+          {data.offer && data.offer.pct > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/15 px-3 py-1.5 text-xs font-medium text-amber-200">
+              <Sparkles className="size-3.5 text-amber-200" /> {data.offer.pct}% off for first visit
             </span>
           )}
         </motion.div>

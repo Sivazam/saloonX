@@ -30,6 +30,8 @@ import {
 import { EmptyState, initials, useDebouncedValue, type CustomersResponse } from './ui-atoms'
 import { MethodBadge } from './ui-atoms'
 import { StatusBadge } from './transactions-view'
+import { useAppStore } from '@/store/use-app-store'
+import { Scissors } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const LOYALTY_BADGE_CLASS =
@@ -146,18 +148,29 @@ function CustomerHistoryDialog({
     enabled: !!customer,
   })
 
-  const [editingBirthday, setEditingBirthday] = useState(false)
+  // Single inline "Edit profile" panel covering the three fields a salon
+  // actually mistypes at billing time: name, mobile, birthday. The previous
+  // dialog only edited birthday — which left the most-common error (a typo'd
+  // mobile) uncorrectable for the lifetime of the customer row.
+  const [editing, setEditing] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [mobileDraft, setMobileDraft] = useState('')
   const [birthdayDraft, setBirthdayDraft] = useState('')
 
-  const birthdayMut = useMutation({
-    mutationFn: (birthday: string | null) =>
-      apiPut<{ customer: CustomerDTO }>(`/api/customers/${customer?.id}`, { birthday }),
+  const profileMut = useMutation({
+    mutationFn: (patch: { name?: string | null; mobile?: string; birthday?: string | null }) =>
+      apiPut<{ customer: CustomerDTO }>(`/api/customers/${customer?.id}`, patch),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ['customers-list'] })
       void qc.invalidateQueries({ queryKey: ['birthdays'] })
       void qc.invalidateQueries({ queryKey: ['customer-history', customer?.id] })
-      toast.success(res.customer.birthday ? 'Birthday saved' : 'Birthday removed')
-      setEditingBirthday(false)
+      // Reflect saved values back into the draft so a re-edit starts clean.
+      const c = res.customer
+      setNameDraft(c.name ?? '')
+      setMobileDraft(c.mobile)
+      setBirthdayDraft(c.birthday ? `${c.birthday.slice(3)}-${c.birthday.slice(0, 2)}` : '')
+      toast.success('Customer profile updated')
+      setEditing(false)
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -165,6 +178,62 @@ function CustomerHistoryDialog({
   const data = historyQ.data
   /** Freshest profile (the list row prop can be stale after edits) — guarded by the render null-check. */
   const live = (data?.customer ?? customer) as CustomerDTO
+
+  // Re-seed drafts whenever the live customer changes (new customer opened or
+  // fresh server data after a save). Idempotent by id — no effect churn.
+  const [seededFor, setSeededFor] = useState<string | null>(null)
+  if (live && seededFor !== live.id) {
+    setSeededFor(live.id)
+    setNameDraft(live.name ?? '')
+    setMobileDraft(live.mobile)
+    setBirthdayDraft(live.birthday ? `${live.birthday.slice(3)}-${live.birthday.slice(0, 2)}` : '')
+    setEditing(false)
+  }
+
+  /** Build the PATCH body — only sends the fields that actually changed. */
+  function buildPatch(): { name?: string | null; mobile?: string; birthday?: string | null } | null {
+    if (!live) return null
+    const patch: { name?: string | null; mobile?: string; birthday?: string | null } = {}
+    const trimmedName = nameDraft.trim()
+    if (trimmedName !== (live.name ?? '')) {
+      patch.name = trimmedName || null
+    }
+    const cleanMobile = mobileDraft.replace(/\D/g, '').slice(0, 10)
+    if (cleanMobile !== live.mobile) {
+      if (!/^\d{10}$/.test(cleanMobile)) {
+        toast.error('Mobile must be exactly 10 digits')
+        return null
+      }
+      patch.mobile = cleanMobile
+    }
+    if (birthdayDraft.trim() === '') {
+      if (live.birthday) patch.birthday = null
+    } else {
+      const m = /^(\d{2})-(\d{2})$/.exec(birthdayDraft.trim())
+      if (!m) {
+        toast.error('Birthday must be DD-MM, e.g. 14-03')
+        return null
+      }
+      const dd = m[1]
+      const mm = m[2]
+      const mmdd = `${mm}-${dd}`
+      if (mmdd !== live.birthday) patch.birthday = mmdd
+    }
+    if (Object.keys(patch).length === 0) {
+      toast('No changes to save')
+      return null
+    }
+    return patch
+  }
+
+  function saveProfile() {
+    const patch = buildPatch()
+    if (!patch) return
+    profileMut.mutate(patch)
+  }
+
+  const mobileDirty = mobileDraft.replace(/\D/g, '').slice(0, 10) !== live.mobile
+  const mobileInvalid = mobileDirty && !/^\d{10}$/.test(mobileDraft.replace(/\D/g, '').slice(0, 10))
 
   return (
     <Dialog open={!!customer} onOpenChange={(open) => !open && onClose()}>
@@ -177,113 +246,179 @@ function CustomerHistoryDialog({
                   aria-hidden
                   className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary"
                 >
-                  {initials(customer.name || customer.mobile)}
+                  {initials(live.name || live.mobile)}
                 </span>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <DialogTitle className="truncate text-left text-lg">
-                    {customer.name || 'Unknown customer'}
+                    {live.name || 'Unknown customer'}
                   </DialogTitle>
-                  <DialogDescription className="text-left font-mono">{customer.mobile}</DialogDescription>
+                  <DialogDescription className="text-left font-mono">{live.mobile}</DialogDescription>
                 </div>
+                {!editing && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 gap-1.5"
+                    onClick={() => setEditing(true)}
+                  >
+                    <Pencil className="size-3.5" aria-hidden />
+                    Edit
+                  </Button>
+                )}
               </div>
 
-              {/* Birthday editor — powers the dashboard reminder list */}
-              <div className="mt-3 flex items-center gap-2">
-                {editingBirthday ? (
-                  <>
+              {editing ? (
+                /* Inline profile editor — name + mobile + birthday on one card.
+                 * These are the three fields a salon actually mistypes at billing
+                 * time. Previously only birthday was editable, so a typo'd mobile
+                 * orphaned the customer for the lifetime of their row. */
+                <div className="mt-3 space-y-2.5 rounded-xl border bg-muted/40 p-3">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="cust-name"
+                      className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                    >
+                      Name
+                    </label>
                     <Input
-                      autoFocus
-                      value={birthdayDraft}
-                      onChange={(e) =>
-                        setBirthdayDraft(
-                          e.target.value.replace(/\D/g, '').replace(/^(\d{0,2})(\d{0,2}).*$/, (_, mm, dd) =>
-                            [mm, dd].filter(Boolean).join('-'),
-                        ),
-                      )}
-                      placeholder="DD-MM"
-                      maxLength={5}
-                      className="tnum h-9 w-24 font-semibold"
-                      aria-label="Birthday day and month"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          const [dd, mm] = birthdayDraft.split('-')
-                          if (dd?.length === 2 && mm?.length === 2)
-                            birthdayMut.mutate(`${mm}-${dd}`)
-                          else toast.error('Enter day and month, e.g. 14-03')
-                        }
-                      }}
+                      id="cust-name"
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value.slice(0, 60))}
+                      placeholder="Customer name (optional)"
+                      className="h-9"
+                      maxLength={60}
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="cust-mobile"
+                      className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                    >
+                      Mobile (10 digits)
+                    </label>
+                    <Input
+                      id="cust-mobile"
+                      inputMode="numeric"
+                      value={mobileDraft}
+                      onChange={(e) => setMobileDraft(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      placeholder="9876543210"
+                      className={cn('tnum h-9 font-mono', mobileInvalid && 'border-destructive')}
+                      aria-invalid={mobileInvalid || undefined}
+                    />
+                    {mobileDirty && !mobileInvalid && (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                        Changing the mobile — if another customer already has this number, the salon must merge profiles instead.
+                      </p>
+                    )}
+                    {mobileInvalid && (
+                      <p className="text-[11px] text-destructive">Mobile must be exactly 10 digits.</p>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="cust-bday"
+                      className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                    >
+                      Birthday (optional)
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        id="cust-bday"
+                        value={birthdayDraft}
+                        onChange={(e) =>
+                          setBirthdayDraft(
+                            e.target.value.replace(/\D/g, '').replace(/^(\d{0,2})(\d{0,2}).*$/, (_, dd, mm) =>
+                              [dd, mm].filter(Boolean).join('-'),
+                            ),
+                          )
+                        }
+                        placeholder="DD-MM"
+                        maxLength={5}
+                        className="tnum h-9 w-24 font-semibold"
+                        aria-label="Birthday day and month (DD-MM)"
+                      />
+                      {live.birthday && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          type="button"
+                          className="h-9 shrink-0 gap-1.5 text-destructive hover:text-destructive"
+                          disabled={profileMut.isPending}
+                          onClick={() => {
+                            setBirthdayDraft('')
+                            void profileMut.mutate({ birthday: null })
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
                     <Button
                       size="sm"
                       className="h-9 gap-1.5"
-                      disabled={birthdayMut.isPending}
-                      onClick={() => {
-                        const [dd, mm] = birthdayDraft.split('-')
-                        if (dd?.length === 2 && mm?.length === 2) birthdayMut.mutate(`${mm}-${dd}`)
-                        else toast.error('Enter day and month, e.g. 14-03')
-                      }}
+                      disabled={profileMut.isPending || mobileInvalid}
+                      onClick={saveProfile}
                     >
-                      {birthdayMut.isPending ? (
+                      {profileMut.isPending ? (
                         <Loader2 className="size-3.5 animate-spin" aria-hidden />
                       ) : (
                         <Check className="size-3.5" aria-hidden />
                       )}
-                      Save
+                      Save changes
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-9 gap-1.5 text-muted-foreground"
-                      onClick={() => setEditingBirthday(false)}
+                      disabled={profileMut.isPending}
+                      onClick={() => {
+                        // Re-seed drafts from the live customer and bail.
+                        setNameDraft(live.name ?? '')
+                        setMobileDraft(live.mobile)
+                        setBirthdayDraft(
+                          live.birthday ? `${live.birthday.slice(3)}-${live.birthday.slice(0, 2)}` : '',
+                        )
+                        setEditing(false)
+                      }}
                     >
                       <X className="size-3.5" aria-hidden />
                       Cancel
                     </Button>
-                    {live.birthday && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="ml-auto h-9 gap-1.5 text-destructive hover:text-destructive"
-                        disabled={birthdayMut.isPending}
-                        onClick={() => birthdayMut.mutate(null)}
-                      >
-                        Remove
-                      </Button>
-                    )}
-                  </>
-                ) : live.birthday ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBirthdayDraft(`${live.birthday!.slice(3)}-${live.birthday!.slice(0, 2)}`)
-                      setEditingBirthday(true)
-                    }}
-                    className="group inline-flex items-center gap-1.5 rounded-full border border-rose-200/70 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
-                  >
-                    <Cake className="size-3.5" aria-hidden />
-                    {live.birthday.slice(3)} {MONTHS_SHORT[Number(live.birthday.slice(0, 2)) - 1]}
-                    {daysUntilBirthday(live.birthday) <= 7 && (
-                      <span className="font-bold">
-                        · {daysUntilBirthday(live.birthday) === 0 ? 'today 🎉' : `in ${daysUntilBirthday(live.birthday)}d`}
-                      </span>
-                    )}
-                    <Pencil className="size-3 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBirthdayDraft('')
-                      setEditingBirthday(true)
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-rose-300 hover:text-rose-700"
-                  >
-                    <Cake className="size-3.5" aria-hidden />
-                    Add birthday
-                  </button>
-                )}
-              </div>
+                  </div>
+                </div>
+              ) : (
+                /* Read-only birthday chip — powers the dashboard reminder list. */
+                <div className="mt-3 flex items-center gap-2">
+                  {live.birthday ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200/70 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+                      <Cake className="size-3.5" aria-hidden />
+                      {live.birthday.slice(3)} {MONTHS_SHORT[Number(live.birthday.slice(0, 2)) - 1]}
+                      {daysUntilBirthday(live.birthday) <= 7 && (
+                        <span className="font-bold">
+                          ·{' '}
+                          {daysUntilBirthday(live.birthday) === 0
+                            ? 'today 🎉'
+                            : `in ${daysUntilBirthday(live.birthday)}d`}
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBirthdayDraft('')
+                        setEditing(true)
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-rose-300 hover:text-rose-700"
+                    >
+                      <Cake className="size-3.5" aria-hidden />
+                      Add birthday
+                    </button>
+                  )}
+                </div>
+              )}
             </DialogHeader>
 
             {historyQ.isPending ? (
@@ -378,6 +513,7 @@ function CustomerHistoryDialog({
 }
 
 export default function CustomersView() {
+  const setView = useAppStore((s) => s.setView)
   const [search, setSearch] = useState('')
   const [lapsedOnly, setLapsedOnly] = useState(false)
   const [selected, setSelected] = useState<CustomerDTO | null>(null)
@@ -488,11 +624,22 @@ export default function CustomersView() {
         <div className="mt-4 rounded-2xl border bg-card lg:mt-6">
           <EmptyState
             icon={Users}
-            title="No customers found"
+            title={debouncedSearch ? 'No customers match your search' : 'No customers yet'}
             hint={
               debouncedSearch
                 ? `Nothing matches "${debouncedSearch}" — try a different name or mobile number.`
-                : 'Customers are added automatically when a bill includes a mobile number.'
+                : 'Customers are added automatically the first time you bill them on the Billing screen.'
+            }
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1 gap-1.5"
+                onClick={() => setView('billing')}
+              >
+                <Scissors className="size-4" aria-hidden />
+                Go to Billing
+              </Button>
             }
           />
         </div>

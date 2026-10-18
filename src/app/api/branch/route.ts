@@ -3,6 +3,7 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiBranch } from "@/lib/auth"
 import { toBranchProfileDTO } from "@/lib/serialize"
+import { DATA_URL_IMAGE_REGEX } from "@/lib/utils"
 
 export const dynamic = "force-dynamic"
 
@@ -19,9 +20,9 @@ const updateSchema = z.object({
   city: z.string().trim().min(2, "City is required").max(40).optional(),
   address: z.string().trim().max(160).optional().nullable(),
   phone: z.string().trim().max(20).optional().nullable(),
-  logo: z.string().startsWith("data:image/").max(400_000).optional().nullable(),
+  logo: z.string().regex(DATA_URL_IMAGE_REGEX, "Logo must be a PNG/JPEG/WebP data URL").max(400_000).optional().nullable(),
   upiId: z.string().trim().max(80).optional().nullable(),
-  upiQrImage: z.string().startsWith("data:image/").max(600_000).optional().nullable(),
+  upiQrImage: z.string().regex(DATA_URL_IMAGE_REGEX, "UPI QR must be a PNG/JPEG/WebP data URL").max(600_000).optional().nullable(),
   ownerMobile: z
     .string()
     .trim()
