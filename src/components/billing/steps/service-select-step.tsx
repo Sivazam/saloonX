@@ -336,7 +336,19 @@ export function ServiceSelectStep({
             <div className="mx-auto flex max-w-xl items-center gap-3 rounded-2xl border bg-card p-3 pl-5 shadow-lg">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">
-                  {totalQty} {totalQty === 1 ? L.item : L.items} ·{' '}
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={totalQty}
+                      initial={{ opacity: 0, scale: 0.6, y: -6 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.6, y: 6 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="tnum inline-block"
+                    >
+                      {totalQty}
+                    </motion.span>
+                  </AnimatePresence>{' '}
+                  {totalQty === 1 ? L.item : L.items} ·{' '}
                   <span className="text-primary">{formatINR(subtotal)}</span>
                 </p>
                 <p className="truncate text-xs text-muted-foreground">{L.tapToAddMore}</p>
@@ -365,53 +377,63 @@ export function ServiceSelectStep({
           </DrawerHeader>
           <div className="max-h-96 overflow-y-auto px-4">
             <ul className="divide-y">
-              {cart.map((item: CartItem) => (
-                <li key={item.serviceId} className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 truncate font-semibold">
-                      <span className="truncate">{item.name}</span>
-                      {item.custom && (
-                        <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">
-                          {lang === 'hi' ? 'अन्य' : 'Custom'}
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-sm text-muted-foreground">{formatINR(item.price)} {L.each}</p>
-                  </div>
-                  <div className="flex items-center gap-1 rounded-xl border bg-background p-1">
-                    <button
-                      type="button"
-                      aria-label={`${L.removeOne} ${item.name}`}
-                      className="flex size-11 items-center justify-center rounded-lg hover:bg-accent"
-                      onClick={() => decrement(item.serviceId)}
-                    >
-                      <span aria-hidden className="text-xl leading-none font-light">−</span>
-                    </button>
-                    <span className="w-7 text-center text-lg font-bold tabular-nums">
-                      {item.qty}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`${L.addOne} ${item.name}`}
-                      className="flex size-11 items-center justify-center rounded-lg hover:bg-accent"
-                      onClick={() => increment(item.serviceId, item.name, item.price)}
-                    >
-                      <Plus className="size-5" />
-                    </button>
-                  </div>
-                  <div className="w-20 text-right font-bold tabular-nums">
-                    {formatINR(item.price * item.qty)}
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`${L.removeFromBill} ${item.name} ${L.fromBill}`}
-                    className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-destructive"
-                    onClick={() => setCartQty(item.serviceId, 0)}
+              <AnimatePresence mode="popLayout" initial={false}>
+                {cart.map((item: CartItem) => (
+                  <motion.li
+                    key={item.serviceId}
+                    layout
+                    initial={{ opacity: 0, scale: 0.94, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.94, y: 4 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="flex items-center gap-3 py-3"
                   >
-                    <X className="size-5" />
-                  </button>
-                </li>
-              ))}
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate font-semibold">
+                        <span className="truncate">{item.name}</span>
+                        {item.custom && (
+                          <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-700 uppercase dark:text-amber-400">
+                            {lang === 'hi' ? 'अन्य' : 'Custom'}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{formatINR(item.price)} {L.each}</p>
+                    </div>
+                    <div className="flex items-center gap-1 rounded-xl border bg-background p-1">
+                      <button
+                        type="button"
+                        aria-label={`${L.removeOne} ${item.name}`}
+                        className="flex size-11 items-center justify-center rounded-lg hover:bg-accent"
+                        onClick={() => decrement(item.serviceId)}
+                      >
+                        <span aria-hidden className="text-xl leading-none font-light">−</span>
+                      </button>
+                      <span className="w-7 text-center text-lg font-bold tabular-nums">
+                        {item.qty}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`${L.addOne} ${item.name}`}
+                        className="flex size-11 items-center justify-center rounded-lg hover:bg-accent"
+                        onClick={() => increment(item.serviceId, item.name, item.price)}
+                      >
+                        <Plus className="size-5" />
+                      </button>
+                    </div>
+                    <div className="w-20 text-right font-bold tabular-nums">
+                      {formatINR(item.price * item.qty)}
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`${L.removeFromBill} ${item.name} ${L.fromBill}`}
+                      className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-destructive"
+                      onClick={() => setCartQty(item.serviceId, 0)}
+                    >
+                      <X className="size-5" />
+                    </button>
+                  </motion.li>
+                ))}
+              </AnimatePresence>
             </ul>
           </div>
           <DrawerFooter>

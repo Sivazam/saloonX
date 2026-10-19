@@ -65,3 +65,10 @@ server.log
 # git bundle backups
 *.bundle
 /db/*.db
+
+# downloadable bundle
+zipper.zip
+--viewport
+
+# QA screenshots
+/download/

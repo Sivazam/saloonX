@@ -3,27 +3,31 @@
 import { useState } from "react"
 import dynamic from "next/dynamic"
 import { useQueryClient } from "@tanstack/react-query"
-import { AnimatePresence, motion } from "framer-motion"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import {
   Building2,
   Check,
   ChevronsUpDown,
   Clock3,
-  Contact,
   Ellipsis,
-  LayoutDashboard,
   LogOut,
   Moon,
   Network,
-  QrCode,
-  ReceiptText,
-  Scissors,
-  Settings2,
-  Sparkles,
   Sun,
-  UsersRound,
-  Wallet,
 } from "lucide-react"
+import {
+  DuoBuilding,
+  DuoChartBar,
+  DuoGear,
+  DuoListChecks,
+  DuoMapTrifold,
+  DuoScissors,
+  DuoTag,
+  DuoTicket,
+  DuoUsers,
+  DuoUsersThree,
+  DuoWallet,
+} from "@/components/ui/duotone-icons"
 import { useTheme } from "next-themes"
 import { signOut } from "firebase/auth"
 import { toast } from "sonner"
@@ -67,19 +71,19 @@ interface NavItem {
 }
 
 const ADMIN_NAV: NavItem[] = [
-  { view: "billing", label: "Billing", icon: Scissors },
-  { view: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { view: "transactions", label: "Transactions", icon: ReceiptText },
-  { view: "expenses", label: "Expenses", icon: Wallet },
-  { view: "services", label: "Menu & Prices", icon: Sparkles },
-  { view: "staff", label: "Staff", icon: UsersRound },
-  { view: "customers", label: "Customers", icon: Contact },
-  { view: "branches", label: "Branches", icon: Building2 },
-  { view: "qrmenu", label: "QR Menu", icon: QrCode },
-  { view: "settings", label: "Settings", icon: Settings2 },
+  { view: "billing", label: "Billing", icon: DuoScissors },
+  { view: "dashboard", label: "Dashboard", icon: DuoChartBar },
+  { view: "transactions", label: "Transactions", icon: DuoListChecks },
+  { view: "expenses", label: "Expenses", icon: DuoWallet },
+  { view: "services", label: "Menu & Prices", icon: DuoTag },
+  { view: "staff", label: "Staff", icon: DuoUsersThree },
+  { view: "customers", label: "Customers", icon: DuoUsers },
+  { view: "branches", label: "Branches", icon: DuoMapTrifold },
+  { view: "qrmenu", label: "QR Menu", icon: DuoTicket },
+  { view: "settings", label: "Settings", icon: DuoGear },
 ]
 
-const SUPER_ADMIN_NAV: NavItem[] = [{ view: "tenants", label: "Franchises", icon: Network }]
+const SUPER_ADMIN_NAV: NavItem[] = [{ view: "tenants", label: "Franchises", icon: DuoBuilding }]
 
 const MOBILE_MORE_VIEWS: View[] = ["expenses", "services", "staff", "customers", "branches", "qrmenu", "settings"]
 
@@ -164,6 +168,54 @@ function RoleBadge({ role }: { role: string }) {
     )
   return (
     <span className="micro rounded-md border bg-secondary px-1.5 py-0.5 text-secondary-foreground">Staff</span>
+  )
+}
+
+/** Sidebar nav (desktop). Active pill uses `layoutId="sidebar-active"` for a
+ *  shared-layout glide between items; each item also gets a tiny `whileHover`
+ *  nudge for tactile feel (skipped when prefers-reduced-motion is set). */
+function SidebarNav({
+  items,
+  effectiveView,
+  setView,
+}: {
+  items: NavItem[]
+  effectiveView: View
+  setView: (v: View) => void
+}) {
+  const prefersReduced = useReducedMotion()
+  return (
+    <>
+      {items.map((item) => {
+        const active = effectiveView === item.view
+        const Icon = item.icon
+        return (
+          <motion.button
+            key={item.view}
+            type="button"
+            onClick={() => setView(item.view)}
+            aria-current={active ? "page" : undefined}
+            whileHover={prefersReduced ? undefined : { x: 2 }}
+            className={cn(
+              "relative flex w-full items-center rounded-lg py-2.5 pl-3 pr-4 text-sm font-medium transition-colors",
+              active ? "text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            {active && (
+              <motion.span
+                layoutId="sidebar-active"
+                className="absolute inset-0 rounded-lg bg-primary shadow-sm"
+                transition={{ type: "spring", stiffness: 400, damping: 32 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-3">
+              <Icon className="size-5 shrink-0" />
+              {item.label}
+            </span>
+          </motion.button>
+        )
+      })}
+    </>
   )
 }
 
@@ -389,34 +441,7 @@ export function AppShell() {
       {/* ── Body: sidebar (desktop) + content ──────────────────────────── */}
       <div className="flex flex-1">
         <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r bg-sidebar px-3 py-4 lg:flex">
-          {sidebarNav.map((item) => {
-            const active = effectiveView === item.view
-            const Icon = item.icon
-            return (
-              <button
-                key={item.view}
-                type="button"
-                onClick={() => setView(item.view)}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "relative flex w-full items-center rounded-lg py-2.5 pl-3 pr-4 text-sm font-medium transition-colors",
-                  active ? "text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                )}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="sidebar-active"
-                    className="absolute inset-0 rounded-lg bg-primary shadow-sm"
-                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                  />
-                )}
-                <span className="relative z-10 flex items-center gap-3">
-                  <Icon className="size-5 shrink-0" />
-                  {item.label}
-                </span>
-              </button>
-            )
-          })}
+          <SidebarNav items={sidebarNav} effectiveView={effectiveView} setView={setView} />
           {isSuperAdmin && (
             <p className="mt-auto hidden rounded-lg border bg-background/60 p-3 text-xs leading-relaxed text-muted-foreground lg:block">
               You are the platform owner. Onboard franchises, approve new branches and review each
@@ -450,9 +475,9 @@ export function AppShell() {
           <div className="grid grid-cols-4">
             {(
               [
-                { view: "billing", label: "Bill", icon: Scissors },
-                { view: "dashboard", label: "Home", icon: LayoutDashboard },
-                { view: "transactions", label: "Bills", icon: ReceiptText },
+                { view: "billing", label: "Bill", icon: DuoScissors },
+                { view: "dashboard", label: "Home", icon: DuoChartBar },
+                { view: "transactions", label: "Bills", icon: DuoListChecks },
               ] as NavItem[]
             ).map((item) => {
               const active = effectiveView === item.view

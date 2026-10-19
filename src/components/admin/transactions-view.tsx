@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  AlertTriangle,
   Ban,
   Banknote,
   Copy,
@@ -13,11 +12,11 @@ import {
   FileDown,
   Loader2,
   QrCode,
-  ReceiptText,
   RotateCcw,
   Search,
   StickyNote,
 } from 'lucide-react'
+import { DuoReceipt, DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPut } from '@/lib/api-client'
 import { formatDateTime, formatDate, formatINR, formatTime } from '@/lib/format'
@@ -618,7 +617,7 @@ export default function TransactionsView() {
         </div>
       ) : listQ.isError ? (
         <div className="mt-4 rounded-2xl border bg-card lg:mt-5">
-          <EmptyState icon={AlertTriangle} title="Could not load bills" hint={(listQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load bills" hint={(listQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void listQ.refetch()}>
               Try again
@@ -628,7 +627,7 @@ export default function TransactionsView() {
       ) : rows.length === 0 ? (
         <div className="mt-4 rounded-2xl border bg-card lg:mt-5">
           <EmptyState
-            icon={ReceiptText}
+            icon={DuoReceipt}
             title="No bills found"
             hint={
               debouncedSearch || method || staffId !== 'all' || branchFilter !== 'all'

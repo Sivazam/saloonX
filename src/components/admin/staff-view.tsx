@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, BadgePercent, Clock3, Info, Loader2, Mail, MapPin, Pencil, Trash2, UserPlus, UsersRound } from 'lucide-react'
+import { BadgePercent, Clock3, Info, Loader2, Mail, MapPin, Pencil, Trash2, UserPlus } from 'lucide-react'
+import { DuoUsers, DuoWarning } from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
 import { formatINR } from '@/lib/format'
@@ -283,7 +284,7 @@ export default function StaffView() {
         </div>
       ) : staffQ.isError ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
-          <EmptyState icon={AlertTriangle} title="Could not load staff" hint={(staffQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load staff" hint={(staffQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void staffQ.refetch()}>
               Try again
@@ -293,7 +294,7 @@ export default function StaffView() {
       ) : users.length === 0 ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
           <EmptyState
-            icon={UsersRound}
+            icon={DuoUsers}
             title="No staff yet"
             hint="Add your first staff member — they sign in with their own email & password."
           />

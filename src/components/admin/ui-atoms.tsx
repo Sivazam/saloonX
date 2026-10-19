@@ -1,10 +1,19 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Banknote, CreditCard, QrCode, type LucideIcon } from 'lucide-react'
+import { motion, useReducedMotion } from 'framer-motion'
+import { Banknote, CreditCard, QrCode } from 'lucide-react'
+import { DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import type { CustomerDTO, PaymentMethod, Role, StaffDTO } from '@/lib/types'
+
+/* ── Shared icon type — accepts both lucide-react and Phosphor duotone icons ── */
+export type IconType = React.ComponentType<{
+  size?: number | string
+  className?: string
+  'aria-hidden'?: boolean
+}>
 
 /* ── Response wrappers (not in lib/types — shared by admin views) ─────────── */
 
@@ -57,7 +66,7 @@ export function formatAxisINR(n: number): string {
 
 export const METHOD_META: Record<
   PaymentMethod,
-  { label: string; icon: LucideIcon; badgeClass: string; chipClass: string; barClass: string; dotClass: string }
+  { label: string; icon: IconType; badgeClass: string; chipClass: string; barClass: string; dotClass: string }
 > = {
   CASH: {
     label: 'Cash',
@@ -119,13 +128,13 @@ export function RoleBadge({ role }: { role: Role }) {
 /* ── Empty state ───────────────────────────────────────────────────────────── */
 
 export function EmptyState({
-  icon: Icon,
+  icon: Icon = DuoWarning,
   title,
   hint,
   action,
   className,
 }: {
-  icon: LucideIcon
+  icon?: IconType
   title: string
   hint?: string
   /** Optional CTA — typically a `<Button>` to reset filters / create the first
@@ -133,11 +142,17 @@ export function EmptyState({
   action?: React.ReactNode
   className?: string
 }) {
+  const prefersReduced = useReducedMotion()
   return (
     <div className={cn('flex flex-col items-center justify-center gap-3 px-6 py-14 text-center', className)}>
-      <div className="flex size-12 items-center justify-center rounded-2xl bg-muted">
-        <Icon className="size-6 text-muted-foreground" aria-hidden />
-      </div>
+      <motion.div
+        className="flex size-12 items-center justify-center rounded-2xl bg-muted"
+        animate={prefersReduced ? undefined : { y: [0, -4, 0] }}
+        transition={prefersReduced ? undefined : { duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+        aria-hidden
+      >
+        <Icon className="size-6 text-muted-foreground" />
+      </motion.div>
       <div className="space-y-1">
         <p className="text-sm font-semibold">{title}</p>
         {hint && <p className="mx-auto max-w-xs text-xs text-muted-foreground">{hint}</p>}

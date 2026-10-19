@@ -341,6 +341,31 @@ export interface StatsResponse {
   }[]
   newCustomers: number
   returningBills: number
+  /** Prior equal-length window — drives the "↑12% vs last week" delta badges. */
+  previous: {
+    totalRevenue: number
+    totalBills: number
+    avgBill: number
+    newCustomers: number
+  }
+  /** Discount analytics — how much the salon is giving away. */
+  discounts: {
+    totalAmount: number
+    billsWithDiscount: number
+    /** % of bills in range that carried a discount. */
+    avgPct: number
+    /** % of gross subtotal that was waived (true revenue leakage). */
+    leakagePct: number
+  }
+  /** Customer depth — retention, ARPU, top spenders in the range. */
+  customerDepth: {
+    unique: number
+    repeatCustomers: number
+    /** % of unique customers who visited more than once in range. */
+    repeatRate: number
+    avgRevenuePerCustomer: number
+  }
+  topCustomers: { name: string; bills: number; spend: number }[]
   expenses: {
     total: number
     count: number

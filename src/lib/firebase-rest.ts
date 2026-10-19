@@ -32,7 +32,7 @@ async function call<T>(path: string, body: Record<string, unknown>): Promise<T> 
   if (!res.ok) {
     const msg = typeof data.error === "object" && data.error !== null && "message" in data.error
       ? String((data.error as { message: unknown }).message)
-      : `Firebase request failed (${res.status})`
+      : `Sign-in request failed (${res.status})`
     throw new FirebaseError(msg)
   }
   return data as T
@@ -46,8 +46,8 @@ export function friendlyAuthMessage(raw: string): string {
   if (raw.includes("INVALID_EMAIL")) return "That email address doesn't look right"
   if (raw.includes("WEAK_PASSWORD")) return "Password must be at least 6 characters"
   if (raw.includes("TOO_MANY_ATTEMPTS_TRY_LATER")) return "Too many attempts — try again in a minute"
-  if (raw.includes("OPERATION_NOT_ALLOWED")) return "Email/password accounts are not enabled in Firebase yet"
-  if (raw.includes("NETWORK_ERROR")) return "Could not reach Firebase — check your connection"
+  if (raw.includes("OPERATION_NOT_ALLOWED")) return "Email/password sign-in isn't enabled yet"
+  if (raw.includes("NETWORK_ERROR")) return "Could not reach the sign-in service — check your connection"
   return raw
 }
 

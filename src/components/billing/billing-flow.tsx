@@ -378,16 +378,24 @@ export default function BillingFlow() {
                     disabled={!clickable}
                     onClick={() => clickable && go(n)}
                     aria-current={active ? 'step' : undefined}
-                    className={`flex h-11 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition-colors sm:px-4 [@media(max-height:740px)]:h-9 [@media(max-height:740px)]:px-2.5 ${
+                    className={`relative flex h-11 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition-colors sm:px-4 [@media(max-height:740px)]:h-9 [@media(max-height:740px)]:px-2.5 ${
                       active
-                        ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                        ? 'border-primary text-primary-foreground'
                         : complete
                           ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
                           : 'text-muted-foreground'
                     } ${clickable ? 'cursor-pointer' : ''}`}
                   >
+                    {active && (
+                      <motion.span
+                        layoutId="billing-active-step"
+                        className="absolute inset-0 rounded-full bg-primary shadow-sm"
+                        transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+                        initial={false}
+                      />
+                    )}
                     <span
-                      className={`flex size-6 items-center justify-center rounded-full text-xs font-bold ${
+                      className={`relative z-10 flex size-6 items-center justify-center rounded-full text-xs font-bold ${
                         active
                           ? 'bg-primary-foreground/20'
                           : complete
@@ -397,7 +405,7 @@ export default function BillingFlow() {
                     >
                       {complete ? <Check className="size-4" /> : n}
                     </span>
-                    <span className="hidden sm:inline">{label}</span>
+                    <span className="relative z-10 hidden sm:inline">{label}</span>
                   </button>
                 </div>
               )

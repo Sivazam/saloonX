@@ -4,9 +4,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  AlertTriangle,
   BadgePercent,
-  Building2,
   Clock3,
   Loader2,
   MapPin,
@@ -19,6 +17,7 @@ import {
   Upload,
   UsersRound,
 } from 'lucide-react'
+import { DuoBuilding, DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
@@ -429,7 +428,7 @@ export default function BranchesView() {
         </div>
       ) : branchesQ.isError ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
-          <EmptyState icon={AlertTriangle} title="Could not load branches" hint={(branchesQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load branches" hint={(branchesQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void branchesQ.refetch()}>
               Try again
@@ -439,7 +438,7 @@ export default function BranchesView() {
       ) : branches.length === 0 ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
           <EmptyState
-            icon={Building2}
+            icon={DuoBuilding}
             title="No branches yet"
             hint="Open your first outlet — staff are assigned to branches to log in there."
           />
@@ -714,7 +713,7 @@ export default function BranchesView() {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <Building2 className="size-5 text-primary" aria-hidden />
+                  <DuoBuilding className="size-5 text-primary" aria-hidden />
                   Manage {editForm.name || 'branch'}
                 </DialogTitle>
                 <DialogDescription>

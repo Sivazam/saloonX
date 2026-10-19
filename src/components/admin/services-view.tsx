@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  AlertTriangle,
   ChevronDown,
   FolderPlus,
   Loader2,
@@ -11,9 +10,9 @@ import {
   Pencil,
   Plus,
   RotateCcw,
-  Sparkles,
   Trash2,
 } from 'lucide-react'
+import { DuoSparkle, DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
@@ -308,7 +307,7 @@ export default function ServicesView() {
         </div>
       ) : menuQ.isError ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
-          <EmptyState icon={AlertTriangle} title="Could not load the menu" hint={(menuQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load the menu" hint={(menuQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void menuQ.refetch()}>
               Try again
@@ -318,7 +317,7 @@ export default function ServicesView() {
       ) : categories.length === 0 ? (
         <div className="hairline mt-4 rounded-xl bg-card lg:mt-6">
           <EmptyState
-            icon={Sparkles}
+            icon={DuoSparkle}
             title="No categories yet"
             hint="Create your first category, then add services to it."
           />

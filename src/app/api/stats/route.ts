@@ -27,6 +27,10 @@ export async function GET(request: Request) {
       byMethod: { CASH: { amount: 0, count: 0 }, UPI: { amount: 0, count: 0 }, CARD: { amount: 0, count: 0 } },
       byBranch: [], daily: [], topServices: [], topStaff: [],
       newCustomers: 0, returningBills: 0,
+      previous: { totalRevenue: 0, totalBills: 0, avgBill: 0, newCustomers: 0 },
+      discounts: { totalAmount: 0, billsWithDiscount: 0, avgPct: 0, leakagePct: 0 },
+      customerDepth: { unique: 0, repeatRate: 0, avgRevenuePerCustomer: 0, repeatCustomers: 0 },
+      topCustomers: [],
       expenses: { total: 0, count: 0, byCategory: {} },
     })
   }
@@ -50,6 +54,75 @@ export async function GET(request: Request) {
     select: { id: true, customerId: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   })
+
+  // ── Prior-equal-length window for period-over-period deltas on KPI cards.
+  //    E.g. if range = 7 days (Oct 12–18), prior = the 7 days before (Oct 5–11).
+  //    This is the single highest-impact analytics: "Revenue ↑12% vs last week".
+  const rangeMs = to.getTime() - from.getTime()
+  const prevTo = new Date(from.getTime() - 1) // exclusive boundary = day before `from`
+  const prevFrom = new Date(prevTo.getTime() - rangeMs)
+  const prevTxns = await db.transaction.findMany({
+    where: { createdAt: { gte: prevFrom, lte: prevTo }, status: "COMPLETED", ...branchFilter },
+    select: { id: true, customerId: true, total: true, createdAt: true, discountAmount: true },
+  })
+  const previous = {
+    totalRevenue: round2(prevTxns.reduce((s, t) => s + t.total, 0)),
+    totalBills: prevTxns.length,
+    avgBill: prevTxns.length > 0 ? round2(prevTxns.reduce((s, t) => s + t.total, 0) / prevTxns.length) : 0,
+    newCustomers: 0,
+  }
+  // New-customers-in-prior-window: a customer whose FIRST ever visit fell in [prevFrom, prevTo].
+  const prevFirstBillAt = new Map<string, Date>()
+  for (const t of allTxns) {
+    if (t.customerId && !prevFirstBillAt.has(t.customerId)) {
+      prevFirstBillAt.set(t.customerId, t.createdAt)
+    }
+  }
+  for (const t of prevTxns) {
+    if (t.customerId) {
+      const first = prevFirstBillAt.get(t.customerId)
+      if (first && first >= prevFrom && first <= prevTo) previous.newCustomers += 1
+    }
+  }
+
+  // ── Discount analytics — how much revenue is the salon giving away?
+  //    Discount leakage = total discount / (subtotal) — what % of gross got waived.
+  let discountTotal = 0
+  let discountBills = 0
+  let grossSubtotal = 0
+  for (const t of rangeTxns) {
+    if (t.discountAmount > 0) {
+      discountTotal = round2(discountTotal + t.discountAmount)
+      discountBills += 1
+    }
+    grossSubtotal = round2(grossSubtotal + t.subtotal)
+  }
+
+  // ── Customer depth — unique customers, repeat rate, ARPU, top spenders.
+  const customerSpend = new Map<string, { id: string; name: string | null; mobile: string | null; bills: number; spend: number }>()
+  for (const t of rangeTxns) {
+    if (!t.customerId) continue
+    const cur = customerSpend.get(t.customerId) ?? {
+      id: t.customerId,
+      name: t.customerName,
+      mobile: t.customerMobile,
+      bills: 0,
+      spend: 0,
+    }
+    cur.bills += 1
+    cur.spend = round2(cur.spend + t.total)
+    customerSpend.set(t.customerId, cur)
+  }
+  const uniqueCustomers = customerSpend.size
+  const repeatCustomers = [...customerSpend.values()].filter((c) => c.bills > 1).length
+  const topCustomers = [...customerSpend.values()]
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 5)
+    .map((c) => ({
+      name: c.name ?? (c.mobile ? `••••${c.mobile.slice(-4)}` : "Walk-in"),
+      bills: c.bills,
+      spend: c.spend,
+    }))
 
   // Headline numbers + payment split + per-branch split.
   const byMethod = {
@@ -179,6 +252,25 @@ export async function GET(request: Request) {
     topStaff,
     newCustomers,
     returningBills,
+    // Period-over-period comparison (prior equal-length window) — drives the
+    // "↑12% vs last week" delta badges on the KPI cards.
+    previous,
+    // Discount analytics — how much the salon is giving away in discounts.
+    discounts: {
+      totalAmount: discountTotal,
+      billsWithDiscount: discountBills,
+      avgPct: discountBills > 0 ? round2((discountBills / totalBills) * 100) : 0,
+      // Leakage = what % of gross subtotal was waived by discounts.
+      leakagePct: grossSubtotal > 0 ? round2((discountTotal / grossSubtotal) * 100) : 0,
+    },
+    // Customer depth — unique + repeat rate + ARPU + top spenders in the range.
+    customerDepth: {
+      unique: uniqueCustomers,
+      repeatCustomers,
+      repeatRate: uniqueCustomers > 0 ? round2((repeatCustomers / uniqueCustomers) * 100) : 0,
+      avgRevenuePerCustomer: uniqueCustomers > 0 ? round2(totalRevenue / uniqueCustomers) : 0,
+    },
+    topCustomers,
     expenses: {
       total: expensesTotal,
       count: expenseRows.length,

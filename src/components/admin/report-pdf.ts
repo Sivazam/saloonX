@@ -200,12 +200,26 @@ export function buildSummaryReportDoc(
   y += 8
 
   /* KPI table */
+  // Period-over-period deltas (↑/↓ vs same-length prior window).
+  const revDelta = stats.previous.totalRevenue > 0
+    ? ((stats.totalRevenue - stats.previous.totalRevenue) / stats.previous.totalRevenue) * 100
+    : null
+  const billsDelta = stats.previous.totalBills > 0
+    ? ((stats.totalBills - stats.previous.totalBills) / stats.previous.totalBills) * 100
+    : null
+  const fmtDelta = (d: number | null): string =>
+    d == null ? '' : ` (${d > 0 ? '↑' : '↓'} ${Math.abs(d).toFixed(1)}% vs last)`
   const kpis: [string, string][] = [
-    ['Revenue', `Rs. ${rs(stats.totalRevenue)}`],
-    ['Bills', String(stats.totalBills)],
+    ['Revenue', `Rs. ${rs(stats.totalRevenue)}${fmtDelta(revDelta)}`],
+    ['Bills', `${stats.totalBills}${fmtDelta(billsDelta)}`],
     ['Average bill', `Rs. ${rs(stats.avgBill)}`],
     ['New customers', String(stats.newCustomers)],
     ['Returning bills', String(stats.returningBills)],
+    ['Unique customers', String(stats.customerDepth.unique)],
+    ['Repeat rate', `${stats.customerDepth.repeatRate}%`],
+    ['ARPU', `Rs. ${rs(stats.customerDepth.avgRevenuePerCustomer)}`],
+    ['Discount given', `Rs. ${rs(stats.discounts.totalAmount)}`],
+    ['Discount leakage', `${stats.discounts.leakagePct}%`],
     ['Expenses', stats.expenses.total > 0 ? `Rs. ${rs(stats.expenses.total)}` : '—'],
     ['Net profit', stats.expenses.total > 0 ? `Rs. ${rs(netProfit)}` : '—'],
   ]
@@ -286,6 +300,26 @@ export function buildSummaryReportDoc(
       headStyles: { fillColor: [120, 85, 90], textColor: 255, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [252, 248, 246] },
       columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    })
+  }
+
+  /* Top customers — who to nurture */
+  if (stats.topCustomers.length > 0) {
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8
+    const custRows: [string, string, string][] = stats.topCustomers.map((c, i) => [
+      `${i + 1}. ${c.name}`,
+      String(c.bills),
+      `Rs. ${rs(c.spend)}`,
+    ])
+    autoTable(doc, {
+      startY: y,
+      head: [['Top customers', 'Visits', 'Spend']],
+      body: custRows,
+      theme: 'grid',
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.4, lineColor: [235, 225, 225], lineWidth: 0.1 },
+      headStyles: { fillColor: [120, 85, 90], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [252, 248, 246] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
     })
   }
 

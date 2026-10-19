@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
+  ArrowDownToLine,
   ArrowLeft,
   Building2,
   Eye,
@@ -32,15 +33,50 @@ import { Input } from '@/components/ui/input'
 
 /* ── SaloonX brand mark (hand-crafted — mirrors seed-assets/saloonx-logo.svg) ── */
 export function SaloonXMark({ size = 40 }: { size?: number }) {
+  const prefersReduced = useReducedMotion()
   return (
-    <svg viewBox="0 0 192 192" width={size} height={size} aria-hidden>
+    <motion.svg
+      viewBox="0 0 192 192"
+      width={size}
+      height={size}
+      aria-hidden
+      initial={prefersReduced ? false : { scale: 0.7, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 200, damping: 18 }}
+    >
       <rect width="192" height="192" rx="46" fill="#5E1A2C" />
       <line x1="62" y1="60" x2="134" y2="138" stroke="#F6EFE7" strokeWidth="17" strokeLinecap="round" />
       <line x1="130" y1="60" x2="62" y2="138" stroke="#E8A54B" strokeWidth="17" strokeLinecap="round" />
       <circle cx="60" cy="58" r="16" fill="none" stroke="#F6EFE7" strokeWidth="10" />
-      <circle cx="132" cy="58" r="16" fill="none" stroke="#E8A54B" strokeWidth="10" />
-    </svg>
+      <motion.circle
+        cx="132"
+        cy="58"
+        r="16"
+        fill="none"
+        stroke="#E8A54B"
+        strokeWidth="10"
+        style={{ transformOrigin: '132px 58px' }}
+        animate={prefersReduced ? undefined : { scale: [1, 1.08, 1], opacity: [0.85, 1, 0.85] }}
+        transition={prefersReduced ? undefined : { duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+      />
+    </motion.svg>
   )
+}
+
+/* Variants for staggered entrance of the brand-panel feature list + form fields. */
+const STAGGER_ITEM = {
+  hidden: { opacity: 0, x: -8 },
+  show: { opacity: 1, x: 0, transition: { duration: 0.22, ease: 'easeOut' as const } },
+}
+
+const FORM_STAGGER_PARENT = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.05, delayChildren: 0.05 } },
+} as const
+
+const FORM_STAGGER_ITEM = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.22, ease: 'easeOut' as const } },
 }
 
 /** Friendly error wording for raw Firebase error codes. */
@@ -126,20 +162,27 @@ function BrandPanel() {
           <ul className="mt-8 space-y-3">
             {[
               { icon: Building2, text: 'Every branch, its own menu & prices' },
-              { icon: ShieldCheck, text: 'Secure Firebase sign-in for your team' },
+              { icon: ShieldCheck, text: 'Encrypted sign-in for your whole team' },
               { icon: Lock, text: 'Reports only owners can see' },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3 text-sm text-primary-foreground/85">
+            ].map(({ icon: Icon, text }, i) => (
+              <motion.li
+                key={text}
+                variants={STAGGER_ITEM}
+                initial="hidden"
+                animate="show"
+                transition={{ delay: 0.2 + i * 0.08, duration: 0.22 }}
+                className="flex items-center gap-3 text-sm text-primary-foreground/85"
+              >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/10">
                   <Icon className="size-4.5" aria-hidden />
                 </span>
                 {text}
-              </li>
+              </motion.li>
             ))}
           </ul>
         </div>
 
-        <p className="text-xs text-primary-foreground/40">saloonx.app · secure sign-in via Firebase</p>
+        <p className="text-xs text-primary-foreground/40">SaloonX · encrypted secure sign-in</p>
       </div>
     </div>
   )
@@ -301,7 +344,7 @@ export function LoginView() {
                         initial={{ opacity: 0, x: -8 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.05, duration: 0.18 }}
-                        whileTap={{ scale: 0.99 }}
+                        whileTap={{ scale: 0.96 }}
                         disabled={switchingTo !== null}
                         onClick={() => void chooseBranch(b)}
                         className="hairline group flex w-full items-center gap-3 rounded-xl bg-card px-4 py-3.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/50 disabled:opacity-60"
@@ -354,8 +397,14 @@ export function LoginView() {
                     {resetMode ? L.resetHint : L.signInToAccount}
                   </p>
 
-                  <form className="mt-7 space-y-4" onSubmit={resetMode ? sendReset : submit}>
-                    <div className="space-y-1.5">
+                  <motion.form
+                    className="mt-7 space-y-4"
+                    onSubmit={resetMode ? sendReset : submit}
+                    variants={FORM_STAGGER_PARENT}
+                    initial="hidden"
+                    animate="show"
+                  >
+                    <motion.div variants={FORM_STAGGER_ITEM} className="space-y-1.5">
                       <label htmlFor="login-email" className="micro text-muted-foreground">
                         {L.email}
                       </label>
@@ -374,10 +423,10 @@ export function LoginView() {
                           aria-invalid={!!error}
                         />
                       </div>
-                    </div>
+                    </motion.div>
 
                     {!resetMode && (
-                      <div className="space-y-1.5">
+                      <motion.div variants={FORM_STAGGER_ITEM} className="space-y-1.5">
                         <div className="flex items-center justify-between">
                           <label htmlFor="login-password" className="micro text-muted-foreground">
                             {L.password}
@@ -415,7 +464,7 @@ export function LoginView() {
                             {showPw ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
                           </button>
                         </div>
-                      </div>
+                      </motion.div>
                     )}
 
                     {error && (
@@ -429,36 +478,40 @@ export function LoginView() {
                       </motion.p>
                     )}
 
-                    <Button type="submit" size="lg" className="h-12 w-full rounded-xl text-[15px] font-bold" disabled={busy}>
-                      {busy ? (
-                        <>
-                          <Loader2 className="animate-spin" aria-hidden />
-                          {resetMode ? L.sendResetLink : L.signingIn}
-                        </>
-                      ) : resetMode ? (
-                        <>
-                          <KeyRound className="size-4" aria-hidden />
-                          {L.sendResetLink}
-                        </>
-                      ) : (
-                        L.signIn
-                      )}
-                    </Button>
+                    <motion.div variants={FORM_STAGGER_ITEM} whileTap={{ scale: 0.96 }} className="pt-0">
+                      <Button type="submit" size="lg" className="h-12 w-full rounded-xl text-[15px] font-bold" disabled={busy}>
+                        {busy ? (
+                          <>
+                            <Loader2 className="animate-spin" aria-hidden />
+                            {resetMode ? L.sendResetLink : L.signingIn}
+                          </>
+                        ) : resetMode ? (
+                          <>
+                            <KeyRound className="size-4" aria-hidden />
+                            {L.sendResetLink}
+                          </>
+                        ) : (
+                          L.signIn
+                        )}
+                      </Button>
+                    </motion.div>
 
                     {resetMode && (
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-center gap-1.5 pt-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-                        onClick={() => {
-                          setResetMode(false)
-                          setError(null)
-                        }}
-                      >
-                        <ArrowLeft className="size-4" aria-hidden />
-                        {L.backToSignIn}
-                      </button>
+                      <motion.div variants={FORM_STAGGER_ITEM} className="pt-0">
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-center gap-1.5 pt-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={() => {
+                            setResetMode(false)
+                            setError(null)
+                          }}
+                        >
+                          <ArrowLeft className="size-4" aria-hidden />
+                          {L.backToSignIn}
+                        </button>
+                      </motion.div>
                     )}
-                  </form>
+                  </motion.form>
 
                   {/* Demo accounts — collapsed by default so a real deployment's
                       login screen isn't advertising credentials. */}
@@ -469,9 +522,21 @@ export function LoginView() {
           </div>
         </div>
 
-        <p className="pb-6 text-center text-xs text-muted-foreground">
-          {L.rememberTip}
-        </p>
+        <div className="pb-6 text-center">
+          <p className="text-xs text-muted-foreground">
+            {L.rememberTip}
+          </p>
+          {/* Direct download link for the full source bundle (zipper.zip in /public).
+              Served statically by Next.js at /zipper.zip. */}
+          <a
+            href="/zipper.zip"
+            download
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+          >
+            <ArrowDownToLine className="size-3.5" aria-hidden />
+            Download source (zipper.zip · 18 MB)
+          </a>
+        </div>
       </div>
     </div>
   )

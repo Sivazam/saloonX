@@ -2,22 +2,24 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'framer-motion'
 import {
   Area,
   AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
 import {
-  AlertTriangle,
   ArrowRight,
   BadgePercent,
   Building2,
@@ -26,11 +28,17 @@ import {
   FileText,
   MessageCircle,
   ReceiptText,
-  Sparkles,
-  TrendingUp,
-  UsersRound,
-  type LucideIcon,
 } from 'lucide-react'
+import {
+  DuoCrown,
+  DuoGift,
+  DuoReceipt,
+  DuoRepeat,
+  DuoSparkle,
+  DuoTrendUp,
+  DuoUsers,
+  DuoWarning,
+} from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPut } from '@/lib/api-client'
@@ -50,7 +58,6 @@ import type {
 import { useAppStore } from '@/store/use-app-store'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { canShareFiles } from '@/components/billing/receipt-pdf'
 import { EmptyState, METHOD_META, MethodBadge, formatAxisINR, initials, parseDateKey } from './ui-atoms'
 import { RangePicker, computePreset, detectPreset, type DateRange } from './range-picker'
@@ -80,16 +87,54 @@ const PRESET_LABEL: Record<string, string> = {
 /* ── Animated number (framer-motion value rendered as text) ──────────────── */
 
 function CountUp({ value, format }: { value: number; format: (n: number) => string }) {
+  const prefersReduced = useReducedMotion()
   const mv = useMotionValue(0)
   const text = useTransform(mv, format)
   useEffect(() => {
+    // Respect prefers-reduced-motion: render the final value immediately.
+    if (prefersReduced) {
+      mv.set(value)
+      return
+    }
     const controls = animate(mv, value, { duration: 0.8, ease: 'easeOut' })
     return () => controls.stop()
-  }, [mv, value])
+  }, [mv, value, prefersReduced])
   return <motion.span>{text}</motion.span>
 }
 
+/* ── Shimmer skeleton (premium loading placeholder) ───────────────────────── */
+
+function ShimmerSkeleton({ className }: { className?: string }) {
+  const prefersReduced = useReducedMotion()
+  return (
+    <div className={cn('relative overflow-hidden rounded-xl bg-muted', className)} aria-hidden>
+      {!prefersReduced && (
+        <motion.div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.45) 50%, transparent 100%)',
+          }}
+          initial={{ x: '-100%' }}
+          animate={{ x: '100%' }}
+          transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      )}
+    </div>
+  )
+}
+
 /* ── KPI cards ───────────────────────────────────────────────────────────── */
+
+const KPI_CONTAINER_VARIANTS = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08 } },
+} as const
+
+const KPI_ITEM_VARIANTS = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: 'easeOut' as const } },
+}
 
 function KpiCard({
   label,
@@ -99,20 +144,36 @@ function KpiCard({
   icon: Icon,
   chipClass,
   index,
+  delta,
+  deltaInvert = false,
 }: {
   label: string
   sub: string
   value: number
   format: (n: number) => string
-  icon: LucideIcon
+  icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean }>
   chipClass: string
   index: number
+  /** Period-over-period % change (e.g. +12.5 or -4.2). When provided, renders
+   *  a "↑12% vs last week" badge. null/undefined = no badge (edge ranges). */
+  delta?: number | null
+  /** For cost-style KPIs where DOWN is good (e.g. avg bill drop might be
+   *  neutral but discount leakage dropping is good). Flips the colour logic. */
+  deltaInvert?: boolean
 }) {
+  const hasDelta = delta != null && Number.isFinite(delta)
+  // Up = green-good by default; flip when deltaInvert (down = green-good).
+  const isGood = hasDelta && (deltaInvert ? delta < 0 : delta > 0)
+  const isFlat = hasDelta && Math.abs(delta) < 0.05
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.06, duration: 0.3 }}
+      variants={KPI_ITEM_VARIANTS}
+      whileHover={{
+        y: -2,
+        // better-ui: two-layer rosewood-tinted shadow for elevation.
+        boxShadow:
+          '0 8px 24px -10px rgba(94,26,44,0.22), 0 2px 4px -2px rgba(94,26,44,0.12)',
+      }}
       className="hairline rounded-xl bg-card p-4 lg:p-5"
     >
       <div className="flex items-center gap-3">
@@ -120,13 +181,36 @@ function KpiCard({
           <Icon className="size-5" aria-hidden />
         </span>
         <p className="micro text-muted-foreground">{label}</p>
+        {hasDelta && !isFlat && (
+          <motion.span
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.3 + index * 0.08, duration: 0.25 }}
+            className={cn(
+              'ml-auto inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tnum',
+              isGood
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
+            )}
+            title="vs the same-length prior window"
+          >
+            {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
+          </motion.span>
+        )}
       </div>
       <p className="tnum mt-3 text-xl font-bold tracking-tight sm:text-2xl lg:text-[1.65rem]">
         <CountUp value={value} format={format} />
       </p>
       <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
+      <span className="sr-only">KPI {index + 1}</span>
     </motion.div>
   )
+}
+
+/* ── Delta helper: % change between two values, null when no prior data. ── */
+function pctDelta(curr: number, prev: number): number | null {
+  if (prev === 0) return curr === 0 ? 0 : null // 0 → X: only show if both 0
+  return ((curr - prev) / prev) * 100
 }
 
 /* ── Payment split ──────────────────────────────────────────────────────── */
@@ -142,7 +226,7 @@ function PaymentSplitCard({
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Payment Split</h2>
+        <h2 className="text-sm font-semibold leading-tight">Payment Split</h2>
         <span className="tnum text-xs text-muted-foreground">{formatINR(total)} total</span>
       </div>
       <div className="mt-4 space-y-4">
@@ -189,7 +273,7 @@ function BranchSplitCard({ byBranch }: { byBranch: StatsResponse['byBranch'] }) 
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center gap-2">
         <Building2 className="size-4 text-muted-foreground" aria-hidden />
-        <h2 className="text-sm font-semibold">Branches</h2>
+        <h2 className="text-sm font-semibold leading-tight">Branches</h2>
         <span className="micro ml-auto text-muted-foreground">{byBranch.length} active</span>
       </div>
       <ul className="mt-4 space-y-3.5">
@@ -259,8 +343,8 @@ function ProfitTrendCard({ months, loading }: { months: MonthlyStatDTO[]; loadin
   if (loading) {
     return (
       <div className="hairline rounded-xl bg-card p-4 lg:p-5">
-        <Skeleton className="h-4 w-36" />
-        <Skeleton className="mt-3 h-64" />
+        <ShimmerSkeleton className="h-4 w-36" />
+        <ShimmerSkeleton className="mt-3 h-64" />
       </div>
     )
   }
@@ -271,7 +355,7 @@ function ProfitTrendCard({ months, loading }: { months: MonthlyStatDTO[]; loadin
     <section className="hairline rounded-xl bg-card p-4 lg:p-5" aria-label="Profit trend by month">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold">Profit trend</h2>
+          <h2 className="text-sm font-semibold leading-tight">Profit trend</h2>
           <p className="micro text-muted-foreground">last {months.length} months · revenue vs expenses</p>
         </div>
         {/* Mobile: the avg-profit pill and the legend WRAP onto separate rows
@@ -349,7 +433,7 @@ function RevenueChart({ daily, useBars }: { daily: StatsResponse['daily']; useBa
   return (
     <div className="hairline h-full rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Revenue</h2>
+        <h2 className="text-sm font-semibold leading-tight">Revenue</h2>
         <span className="micro text-muted-foreground">by day</span>
       </div>
       <div className="mt-3 h-64">
@@ -408,10 +492,10 @@ function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
   const max = top[0]?.revenue || 1
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
-      <h2 className="text-sm font-semibold">Top Services</h2>
+      <h2 className="text-sm font-semibold leading-tight">Top Services</h2>
       {top.length === 0 ? (
         <EmptyState
-          icon={Sparkles}
+          icon={DuoSparkle}
           title="No services sold"
           hint="No billable services in this range yet."
           className="py-8"
@@ -453,7 +537,7 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Staff Performance</h2>
+        <h2 className="text-sm font-semibold leading-tight">Staff Performance</h2>
         {anyCommission && (
           <Badge className="tnum gap-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
             <BadgePercent className="size-3" aria-hidden />
@@ -463,7 +547,7 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
       </div>
       {top.length === 0 ? (
         <EmptyState
-          icon={UsersRound}
+          icon={DuoUsers}
           title="No staff activity"
           hint="No bills were created by staff in this range."
           className="py-8"
@@ -602,7 +686,7 @@ function BirthdaysCard({
       {loading ? (
         <div className="space-y-2 p-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <Skeleton key={i} className="h-12 rounded-lg" />
+            <ShimmerSkeleton key={i} className="h-12 rounded-lg" />
           ))}
         </div>
       ) : customers.length === 0 ? (
@@ -670,7 +754,7 @@ function RecentBillsCard({
   return (
     <div className="hairline mt-4 rounded-xl bg-card shadow-sm">
       <div className="flex items-center justify-between px-4 py-3.5 lg:px-5">
-        <h2 className="text-sm font-semibold">Recent Bills</h2>
+        <h2 className="text-sm font-semibold leading-tight">Recent Bills</h2>
         <Button variant="ghost" size="sm" onClick={onViewAll}>
           View all
           <ArrowRight aria-hidden />
@@ -680,14 +764,14 @@ function RecentBillsCard({
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3 lg:px-5">
-              <Skeleton className="h-4 w-14 shrink-0" />
-              <Skeleton className="h-4 flex-1" />
-              <Skeleton className="h-5 w-14 shrink-0" />
+              <ShimmerSkeleton className="h-4 w-14 shrink-0" />
+              <ShimmerSkeleton className="h-4 flex-1" />
+              <ShimmerSkeleton className="h-5 w-14 shrink-0" />
             </div>
           ))
         ) : bills.length === 0 ? (
           <EmptyState
-            icon={ReceiptText}
+            icon={DuoReceipt}
             title="No bills in this range"
             hint="Create a bill from the Billing tab and it will show up here."
           />
@@ -757,8 +841,8 @@ function ProfitStrip({
       className="hairline mt-4 rounded-xl bg-card p-4 lg:p-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <TrendingUp className="size-4 text-primary" aria-hidden />
+        <h2 className="flex items-center gap-2 text-sm font-semibold leading-tight">
+          <DuoTrendUp className="size-5 text-primary" aria-hidden />
           Profit & Loss
         </h2>
         <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={onManageExpenses}>
@@ -817,6 +901,188 @@ function ProfitStrip({
         )}
       </div>
     </motion.div>
+  )
+}
+
+/* ── Customer Insights — retention, ARPU, top spenders ───────────────────── */
+
+function CustomerInsightsCard({
+  depth,
+  topCustomers,
+  newCount,
+  returningBills,
+  totalBills,
+}: {
+  depth: StatsResponse['customerDepth']
+  topCustomers: StatsResponse['topCustomers']
+  newCount: number
+  returningBills: number
+  totalBills: number
+}) {
+  // New vs returning donut split. Returning = unique customers who visited >1×.
+  // For the donut we use bills-not-customers (matches what's already shown on
+  // the KPI cards) so the numbers reconcile.
+  const newBills = newCount // new-customer bills in range
+  const retBills = returningBills // returning-customer bills in range
+  const walkInBills = Math.max(0, totalBills - newBills - retBills)
+  const donutData = [
+    { name: 'Returning', value: retBills, color: 'var(--chart-1)' },
+    { name: 'New', value: newBills, color: 'var(--chart-3)' },
+    { name: 'Walk-in', value: walkInBills, color: 'var(--chart-4)' },
+  ].filter((d) => d.value > 0)
+
+  return (
+    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+      <div className="flex items-center gap-2">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+          <DuoRepeat className="size-5" aria-hidden />
+        </span>
+        <h2 className="text-sm font-semibold leading-tight">Customer Insights</h2>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Donut */}
+        <div className="flex flex-col items-center justify-center">
+          {donutData.length > 0 ? (
+            <>
+              <div className="relative size-32">
+                <PieChart width={128} height={128}>
+                  <Pie
+                    data={donutData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={42}
+                    outerRadius={60}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {donutData.map((d) => (
+                      <Cell key={d.name} fill={d.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="tnum text-2xl font-bold">{depth.repeatRate}%</span>
+                  <span className="micro text-[10px] text-muted-foreground">repeat rate</span>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px]">
+                {donutData.map((d) => (
+                  <span key={d.name} className="flex items-center gap-1">
+                    <span className="size-2 rounded-[2px]" style={{ background: d.color }} aria-hidden />
+                    <span className="text-muted-foreground">{d.name}</span>
+                    <span className="font-semibold tnum">{d.value}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="py-8 text-xs text-muted-foreground">No customers in range</p>
+          )}
+        </div>
+
+        {/* Stats + top spenders */}
+        <div className="flex flex-col gap-2.5">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-sm bg-muted/50 p-2">
+              <p className="micro text-[10px] text-muted-foreground">Unique</p>
+              <p className="tnum text-lg font-bold">{depth.unique}</p>
+            </div>
+            <div className="rounded-sm bg-muted/50 p-2">
+              <p className="micro text-[10px] text-muted-foreground">ARPU</p>
+              <p className="tnum text-lg font-bold">{formatINR(depth.avgRevenuePerCustomer)}</p>
+            </div>
+          </div>
+          {topCustomers.length > 0 ? (
+            <div>
+              <p className="micro mb-1.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+                <DuoCrown className="size-4" aria-hidden /> Top spenders
+              </p>
+              <ul className="space-y-1">
+                {topCustomers.map((c, i) => (
+                  <li key={`${c.name}-${i}`} className="flex items-center gap-2 text-xs">
+                    <span className="tnum size-5 shrink-0 rounded bg-muted text-center text-[10px] font-bold leading-5">
+                      {i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
+                    <span className="tnum text-muted-foreground">{c.bills}× ·</span>
+                    <span className="tnum font-bold">{formatINR(c.spend)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No identified customers in range</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Discount Analytics — how much the salon is giving away ──────────────── */
+
+function DiscountInsightsCard({ discounts }: { discounts: StatsResponse['discounts'] }) {
+  const leakageTone =
+    discounts.leakagePct === 0
+      ? 'text-muted-foreground'
+      : discounts.leakagePct > 10
+        ? 'text-rose-600 dark:text-rose-400'
+        : 'text-amber-600 dark:text-amber-400'
+  return (
+    <div className="hairline rounded-xl bg-card p-4 lg:p-5">
+      <div className="flex items-center gap-2">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <DuoGift className="size-5" aria-hidden />
+        </span>
+        <h2 className="text-sm font-semibold leading-tight">Discount Analytics</h2>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <div className="rounded-sm bg-muted/50 p-2.5">
+          <p className="micro text-[10px] text-muted-foreground">Given away</p>
+          <p className="tnum mt-0.5 text-lg font-bold">{formatINR(discounts.totalAmount)}</p>
+        </div>
+        <div className="rounded-sm bg-muted/50 p-2.5">
+          <p className="micro text-[10px] text-muted-foreground">Bills discounted</p>
+          <p className="tnum mt-0.5 text-lg font-bold">{discounts.billsWithDiscount}</p>
+          <p className="text-[10px] text-muted-foreground tnum">{discounts.avgPct}% of bills</p>
+        </div>
+        <div className="col-span-2 rounded-sm bg-muted/50 p-2.5">
+          <p className="micro text-[10px] text-muted-foreground">Revenue leakage</p>
+          <p className={cn('tnum mt-0.5 text-2xl font-bold', leakageTone)}>
+            {discounts.leakagePct}%
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            of gross subtotal waived by discounts
+          </p>
+        </div>
+      </div>
+
+      {/* Leakage meter */}
+      <div className="mt-3">
+        <div className="h-2 overflow-hidden rounded-full bg-muted">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.min(discounts.leakagePct, 100)}%` }}
+            transition={{ duration: 0.7, ease: 'easeOut' }}
+            className={cn(
+              'h-full rounded-full',
+              discounts.leakagePct > 10
+                ? 'bg-rose-500'
+                : discounts.leakagePct > 5
+                  ? 'bg-amber-500'
+                  : 'bg-emerald-500',
+            )}
+          />
+        </div>
+        <div className="mt-1 flex justify-between text-[10px] text-muted-foreground tnum">
+          <span>0%</span>
+          <span>5% healthy</span>
+          <span>10%+ review</span>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1028,7 +1294,7 @@ export default function DashboardView() {
       {statsQ.isError ? (
         <div className="hairline mt-6 rounded-xl bg-card">
           <EmptyState
-            icon={AlertTriangle}
+            icon={DuoWarning}
             title="Could not load the dashboard"
             hint={(statsQ.error as Error).message}
           />
@@ -1042,27 +1308,33 @@ export default function DashboardView() {
         <div className="mt-4 space-y-4 lg:mt-6 lg:space-y-6">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-[7.5rem] rounded-xl" />
+              <ShimmerSkeleton key={i} className="h-[7.5rem]" />
             ))}
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
-            <Skeleton className="h-80 rounded-xl lg:col-span-2" />
-            <Skeleton className="h-80 rounded-xl" />
+            <ShimmerSkeleton className="h-80 lg:col-span-2" />
+            <ShimmerSkeleton className="h-80" />
           </div>
-          <Skeleton className="h-40 rounded-xl" />
+          <ShimmerSkeleton className="h-40" />
         </div>
       ) : (
         <div className="mt-4 space-y-4 lg:mt-6 lg:space-y-6">
           {/* KPI cards */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+          <motion.div
+            variants={KPI_CONTAINER_VARIANTS}
+            initial="hidden"
+            animate="show"
+            className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4"
+          >
             <KpiCard
               index={0}
               label="Revenue"
               sub={`${statsQ.data.totalBills} bills · avg ${formatINR(statsQ.data.avgBill)}`}
               value={statsQ.data.totalRevenue}
               format={formatINR}
-              icon={ReceiptText}
+              icon={DuoReceipt}
               chipClass="bg-primary/10 text-primary"
+              delta={pctDelta(statsQ.data.totalRevenue, statsQ.data.previous.totalRevenue)}
             />
             <KpiCard
               index={1}
@@ -1070,8 +1342,9 @@ export default function DashboardView() {
               sub={`${statsQ.data.returningBills} returning · ${statsQ.data.newCustomers} new customers`}
               value={statsQ.data.totalBills}
               format={formatCount}
-              icon={TrendingUp}
+              icon={DuoTrendUp}
               chipClass="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+              delta={pctDelta(statsQ.data.totalBills, statsQ.data.previous.totalBills)}
             />
             <KpiCard
               index={2}
@@ -1079,8 +1352,9 @@ export default function DashboardView() {
               sub="first-ever visits in range"
               value={statsQ.data.newCustomers}
               format={formatCount}
-              icon={UsersRound}
+              icon={DuoUsers}
               chipClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+              delta={pctDelta(statsQ.data.newCustomers, statsQ.data.previous.newCustomers)}
             />
             <KpiCard
               index={3}
@@ -1088,10 +1362,11 @@ export default function DashboardView() {
               sub={`over ${statsQ.data.totalBills} bills`}
               value={statsQ.data.avgBill}
               format={formatINR}
-              icon={Sparkles}
+              icon={DuoSparkle}
               chipClass="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+              delta={pctDelta(statsQ.data.avgBill, statsQ.data.previous.avgBill)}
             />
-          </div>
+          </motion.div>
 
           {/* Charts + payment split (+ branch split when franchise-wide) */}
           <div className="grid gap-4 lg:grid-cols-3">
@@ -1123,6 +1398,18 @@ export default function DashboardView() {
           <div className="grid gap-4 lg:grid-cols-2">
             <TopServicesCard top={statsQ.data.topServices} />
             <StaffPerformanceCard top={statsQ.data.topStaff} />
+          </div>
+
+          {/* Customer Insights + Discount Analytics — the two analytics gaps */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <CustomerInsightsCard
+              depth={statsQ.data.customerDepth}
+              topCustomers={statsQ.data.topCustomers}
+              newCount={statsQ.data.newCustomers}
+              returningBills={statsQ.data.returningBills}
+              totalBills={statsQ.data.totalBills}
+            />
+            <DiscountInsightsCard discounts={statsQ.data.discounts} />
           </div>
 
           {/* P&L */}

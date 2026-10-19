@@ -4,7 +4,6 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  AlertTriangle,
   BadgeCheck,
   Building2,
   ChevronDown,
@@ -19,6 +18,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
+import { DuoBuilding, DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
@@ -350,7 +350,7 @@ export default function TenantsView() {
       ) : tenantsQ.isError ? (
         <div className="hairline mt-4 rounded-xl bg-card">
           <EmptyState
-            icon={AlertTriangle}
+            icon={DuoWarning}
             title="Could not load the platform"
             hint={(tenantsQ.error as Error).message}
           />
@@ -510,7 +510,7 @@ export default function TenantsView() {
           {tenants.length === 0 ? (
             <div className="hairline mt-4 rounded-xl bg-card">
               <EmptyState
-                icon={Network}
+                icon={DuoBuilding}
                 title="No franchises yet"
                 hint="Onboard your first franchise — you'll create its first branch and its admin in one go."
               />
@@ -810,7 +810,7 @@ export default function TenantsView() {
                 {errors.adminPassword && <p className="text-xs text-destructive">{errors.adminPassword}</p>}
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                The admin signs in with this email + password (a real Firebase login) and can open more
+                The admin signs in with this email + password (a real email + password login) and can open more
                 branches, manage the menu and see the whole chain's reports.
               </p>
             </section>

@@ -3,9 +3,7 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  AlertTriangle,
   BadgePercent,
-  Building2,
   Loader2,
   MapPin,
   QrCode,
@@ -15,6 +13,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
+import { DuoBuilding, DuoWarning } from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
 import { apiGet, apiPut } from '@/lib/api-client'
 import { formatINR } from '@/lib/format'
@@ -323,7 +322,7 @@ export default function SettingsView() {
       <div className="p-4 pb-24 lg:p-6 lg:pb-6">
         <div className="hairline rounded-xl bg-card">
           <EmptyState
-            icon={AlertTriangle}
+            icon={DuoWarning}
             title="Could not load branch settings"
             hint={(branchQ.error as Error).message}
           />
@@ -342,7 +341,7 @@ export default function SettingsView() {
       <div className="p-4 pb-24 lg:p-6 lg:pb-6">
         <div className="hairline rounded-xl bg-card">
           <EmptyState
-            icon={Building2}
+            icon={DuoBuilding}
             title="No branch context"
             hint="Settings manage the branch you are working at. Switch to a branch from the header."
           />
@@ -363,7 +362,7 @@ export default function SettingsView() {
              
             <img src={form.logo ?? tenantLogo ?? ''} alt="" className="size-full object-cover" />
           ) : (
-            <Building2 className="size-6 text-muted-foreground" aria-hidden />
+            <DuoBuilding className="size-6 text-muted-foreground" aria-hidden />
           )}
         </span>
         <div className="min-w-0 flex-1">

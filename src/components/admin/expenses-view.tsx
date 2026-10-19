@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
-  AlertTriangle,
   Download,
   FileText,
   Home,
@@ -21,6 +20,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
+import { DuoCurrencyInr, DuoWarning } from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
 import { formatINR, formatDate, toDateKey } from '@/lib/format'
@@ -164,7 +164,7 @@ function ExpenseDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <IndianRupee className="size-5 text-rose-600 dark:text-rose-400" />
+            <DuoCurrencyInr className="size-5 text-rose-600 dark:text-rose-400" />
             {editing ? 'Edit Expense' : 'Add Expense'}
           </DialogTitle>
           <DialogDescription>
@@ -490,7 +490,7 @@ export default function ExpensesView() {
 
       {expensesQ.isError ? (
         <div className="mt-6 rounded-2xl border bg-card">
-          <EmptyState icon={AlertTriangle} title="Could not load expenses" hint={(expensesQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load expenses" hint={(expensesQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void expensesQ.refetch()}>
               Try again
@@ -564,7 +564,7 @@ export default function ExpensesView() {
             {expensesQ.data.data.length === 0 ? (
               <div className="rounded-2xl border bg-card p-10 text-center">
                 <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-rose-500/10">
-                  <IndianRupee className="size-7 text-rose-600 dark:text-rose-400" />
+                  <DuoCurrencyInr className="size-7 text-rose-600 dark:text-rose-400" />
                 </div>
                 <p className="mt-4 text-lg font-semibold">No expenses in this range</p>
                 <p className="mt-1 text-sm text-muted-foreground">

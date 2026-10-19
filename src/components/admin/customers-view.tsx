@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { AlertTriangle, BadgePercent, Cake, CalendarClock, Check, Loader2, MessageCircle, Pencil, Search, StickyNote, Users, X } from 'lucide-react'
+import { BadgePercent, Cake, CalendarClock, Check, Loader2, MessageCircle, Pencil, Search, StickyNote, X } from 'lucide-react'
+import { DuoCalendarBlank, DuoUsers, DuoWarning } from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
 import { apiGet, apiPut } from '@/lib/api-client'
 import { formatDate, formatDateTime, formatINR } from '@/lib/format'
@@ -429,13 +430,13 @@ function CustomerHistoryDialog({
               </div>
             ) : historyQ.isError ? (
               <EmptyState
-                icon={AlertTriangle}
+                icon={DuoWarning}
                 title="Could not load history"
                 hint={(historyQ.error as Error).message}
               />
             ) : !data || data.transactions.length === 0 ? (
               <EmptyState
-                icon={CalendarClock}
+                icon={DuoCalendarBlank}
                 title="No visits yet"
                 hint="Bills created for this mobile number will appear here."
               />
@@ -613,7 +614,7 @@ export default function CustomersView() {
         </div>
       ) : listQ.isError ? (
         <div className="mt-4 rounded-2xl border bg-card lg:mt-6">
-          <EmptyState icon={AlertTriangle} title="Could not load customers" hint={(listQ.error as Error).message} />
+          <EmptyState icon={DuoWarning} title="Could not load customers" hint={(listQ.error as Error).message} />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void listQ.refetch()}>
               Try again
@@ -623,7 +624,7 @@ export default function CustomersView() {
       ) : visibleCustomers.length === 0 ? (
         <div className="mt-4 rounded-2xl border bg-card lg:mt-6">
           <EmptyState
-            icon={Users}
+            icon={DuoUsers}
             title={debouncedSearch ? 'No customers match your search' : 'No customers yet'}
             hint={
               debouncedSearch

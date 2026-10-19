@@ -33,62 +33,40 @@ const METHOD_META: Record<PaymentMethod, { label: string; Icon: typeof Banknote 
   CARD: { label: 'Card', Icon: CreditCard },
 }
 
-const PARTICLE_COLORS = ['#059669', '#e11d48', '#f59e0b', '#10b981', '#f43f5e']
-
 function SuccessMark() {
   return (
-    <div className="relative text-emerald-500" aria-hidden="true">
-      {/* Confetti particles */}
-      {Array.from({ length: 8 }).map((_, i) => {
-        const angle = (i / 8) * Math.PI * 2
-        return (
-          <motion.span
-            key={i}
-            className="absolute left-1/2 top-1/2 size-2 rounded-full"
-            style={{ backgroundColor: PARTICLE_COLORS[i % PARTICLE_COLORS.length] }}
-            initial={{ x: 0, y: 0, opacity: 0, scale: 0 }}
-            animate={{
-              x: Math.cos(angle) * 60,
-              y: Math.sin(angle) * 60,
-              opacity: [0, 1, 0],
-              scale: [0, 1, 0.6],
-            }}
-            transition={{ duration: 0.9, delay: 0.55, ease: 'easeOut' }}
-          />
-        )
-      })}
-      <motion.svg
-        viewBox="0 0 100 100"
-        className="size-24"
-        initial={{ scale: 0.5, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: 'spring', stiffness: 220, damping: 16 }}
-      >
-        <motion.circle
-          cx="50"
-          cy="50"
-          r="44"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="6"
-          strokeLinecap="round"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-        />
-        <motion.path
-          d="M31 52 L45 66 L71 38"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          initial={{ pathLength: 0 }}
-          animate={{ pathLength: 1 }}
-          transition={{ delay: 0.45, duration: 0.35, ease: 'easeOut' }}
-        />
-      </motion.svg>
-    </div>
+    <motion.svg
+      viewBox="0 0 100 100"
+      className="size-24 text-emerald-500"
+      initial={{ scale: 0.5, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 220, damping: 16 }}
+      aria-hidden="true"
+    >
+      <motion.circle
+        cx="50"
+        cy="50"
+        r="44"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="6"
+        strokeLinecap="round"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+      />
+      <motion.path
+        d="M31 52 L45 66 L71 38"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ delay: 0.45, duration: 0.35, ease: 'easeOut' }}
+      />
+    </motion.svg>
   )
 }
 
@@ -113,7 +91,14 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
           className="pointer-events-none absolute top-0 h-44 w-64 rounded-full bg-emerald-500/10 blur-3xl dark:bg-emerald-400/10"
         />
         <SuccessMark />
-        <h1 className="mt-4 text-2xl font-bold sm:text-3xl">{L.billPaid}</h1>
+        <motion.h1
+          initial={{ opacity: 0, scale: 0.85, y: 6 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ delay: 0.35, type: 'spring', stiffness: 220, damping: 16 }}
+          className="mt-4 text-2xl font-bold sm:text-3xl"
+        >
+          {L.billPaid}
+        </motion.h1>
         <motion.p
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
