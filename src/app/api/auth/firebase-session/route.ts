@@ -37,19 +37,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Your login session expired — please sign in again" }, { status: 401 })
   }
 
-  // 2) Find the local account (by Firebase UID, falling back to email for
-  //    rows provisioned before their first Firebase sign-in).
+  // 2) Find the local account. Binding is by Firebase UID ONLY — an email
+  //    fallback would let anyone register a staff email at Firebase (signUp is
+  //    public and needs no inbox access) and take the account over. The only
+  //    sanctioned migration path is a verified email on a row whose UID is
+  //    still unbound (null or a "pending:" placeholder from offline seeding).
   const include = {
     tenant: { select: { id: true, name: true, logo: true, active: true } },
     branches: { include: { branch: { select: { id: true, name: true, city: true, active: true, approved: true } } } },
   }
   let user = await db.user.findUnique({ where: { firebaseUid: fbUser.localId }, include })
-  if (!user) {
-    user = await db.user
-      .findUnique({ where: { email: fbUser.email }, include })
-      .catch(() => null)
-    if (user) {
-      // Backfill the uid binding for next time.
+  if (!user && fbUser.emailVerified) {
+    const byEmail = await db.user.findUnique({ where: { email: fbUser.email }, include }).catch(() => null)
+    // Only rows that were never bound to a real Firebase identity may be
+    // claimed this way — and only with a Google-verified email.
+    if (byEmail && (byEmail.firebaseUid === null || byEmail.firebaseUid.startsWith("pending:"))) {
+      user = byEmail
       await db.user.update({ where: { id: user.id }, data: { firebaseUid: fbUser.localId } }).catch(() => {})
     }
   }

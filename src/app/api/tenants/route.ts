@@ -3,6 +3,7 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
 import { createFirebaseUser, deleteFirebaseUser, friendlyAuthMessage } from "@/lib/firebase-rest"
+import { uniqueMenuSlug } from "@/lib/slug"
 import { round2, toTenantDTO } from "@/lib/serialize"
 import { DATA_URL_IMAGE_REGEX } from "@/lib/utils"
 
@@ -170,6 +171,9 @@ export async function POST(request: Request) {
           phone: firstBranch.phone ?? null,
           upiId: firstBranch.upiId ?? null,
           billPrefix: firstBranch.billPrefix,
+          // Public QR-menu slug — the branch is reachable at /?menu=<slug>
+          // the moment it exists (matches admin-created branches).
+          menuSlug: await uniqueMenuSlug(name, firstBranch.name, firstBranch.city),
           // Branches created by the platform super admin are live immediately.
           approved: true,
           approvedAt: new Date(),
@@ -200,7 +204,13 @@ export async function POST(request: Request) {
   } catch (e) {
     // Roll back the Firebase account so the email stays usable.
     await deleteFirebaseUser(firebase.idToken)
-    const msg = (e as { code?: string }).code === "P2002" ? "This email already has a SaloonX account" : (e as Error).message
+    console.error("[api/tenants] create failed", e)
+    // P2002 = unique-constraint clash (friendly); anything else is an
+    // internal detail (SQLite/Prisma internals) that must not reach the client.
+    const msg =
+      (e as { code?: string }).code === "P2002"
+        ? "This email already has a SaloonX account"
+        : "Could not save — please retry"
     return NextResponse.json({ error: friendlyAuthMessage(msg) }, { status: 409 })
   }
 

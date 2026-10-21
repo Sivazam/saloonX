@@ -10,10 +10,15 @@ import {
   Printer,
   QrCode,
   Share2,
+  Split,
   StickyNote,
 } from 'lucide-react'
 import { formatDateTime, formatINR } from '@/lib/format'
-import type { BranchProfileDTO, PaymentMethod, TransactionDTO } from '@/lib/types'
+import type {
+  BranchProfileDTO,
+  PaymentMethodOrSplit,
+  TransactionDTO,
+} from '@/lib/types'
 import { useT } from '@/store/use-app-store'
 import { Button } from '@/components/ui/button'
 import { downloadReceiptPdf } from '../receipt-pdf'
@@ -27,10 +32,11 @@ interface SuccessStepProps {
   onNewBill: () => void
 }
 
-const METHOD_META: Record<PaymentMethod, { label: string; Icon: typeof Banknote }> = {
+const METHOD_META: Record<PaymentMethodOrSplit, { label: string; Icon: typeof Banknote }> = {
   CASH: { label: 'Cash', Icon: Banknote },
   UPI: { label: 'UPI', Icon: QrCode },
   CARD: { label: 'Card', Icon: CreditCard },
+  SPLIT: { label: 'Split', Icon: Split },
 }
 
 function SuccessMark() {
@@ -74,7 +80,23 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
   const L = useT()
   const method = METHOD_META[t.paymentMethod] ?? METHOD_META.CASH
   const methodLabel =
-    t.paymentMethod === 'CASH' ? L.cash : t.paymentMethod === 'UPI' ? L.upi : L.card
+    t.paymentMethod === 'SPLIT'
+      ? L.splitPayment
+      : t.paymentMethod === 'CASH'
+        ? L.cash
+        : t.paymentMethod === 'UPI'
+          ? L.upi
+          : L.card
+  // "Cash ₹600 + UPI ₹400" — the granular slices of a split settlement.
+  const splitSummary =
+    t.paymentMethod === 'SPLIT' && t.payments.length > 1
+      ? t.payments
+          .map((p) => {
+            const label = p.method === 'CASH' ? L.cash : p.method === 'UPI' ? L.upi : L.card
+            return `${label} ${formatINR(p.amount)}`
+          })
+          .join(' + ')
+      : null
   const logo = branch.logo ?? branch.tenantLogo
 
   /* WhatsApp & More Share always deliver the same A5 PDF receipt that Print produces. */
@@ -161,6 +183,11 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
         <div className="mt-3 border-t border-dashed pt-3 text-center text-xs text-muted-foreground">
           <p className="font-semibold text-foreground">{t.billNo}</p>
           <p>{formatDateTime(t.createdAt)}</p>
+          {pendingSync && (
+            <p className="mt-1.5 rounded-lg border border-amber-300/70 bg-amber-50 px-2 py-1.5 font-medium text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300">
+              {L.provisionalReceipt}
+            </p>
+          )}
         </div>
 
         <ul className="mt-3 space-y-1.5 border-t border-dashed pt-3">
@@ -181,9 +208,14 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
             <span>{L.subtotal}</span>
             <span className="tnum font-semibold">{formatINR(t.subtotal)}</span>
           </div>
-          {t.discountPct > 0 && (
+          {t.discountAmount > 0 && (
             <div className="flex justify-between text-emerald-600 dark:text-emerald-400">
-              <span>{L.discount} ({t.discountPct}%)</span>
+              <span>
+                {L.discount}{' '}
+                {t.discountFlat
+                  ? `(${formatINR(t.discountFlat)})`
+                  : `(${t.discountPct}%)`}
+              </span>
               <span className="tnum font-semibold">
                 -{formatINR(t.discountAmount)}
               </span>
@@ -195,6 +227,12 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
               <span className="tnum font-semibold">{formatINR(t.gstAmount)}</span>
             </div>
           )}
+          {t.tipAmount > 0 && (
+            <div className="flex justify-between text-muted-foreground">
+              <span>{L.tipLabel}</span>
+              <span className="tnum font-semibold text-amber-700 dark:text-amber-400">+{formatINR(t.tipAmount)}</span>
+            </div>
+          )}
           <div className="flex items-baseline justify-between pt-1">
             <span className="font-bold">{L.total}</span>
             <span className="tnum text-xl font-bold text-primary">
@@ -203,7 +241,7 @@ export function SuccessStep({ transaction: t, branch, pendingSync = false, onNew
           </div>
           <p className="flex items-center justify-end gap-1.5 pt-1 text-xs font-semibold text-muted-foreground">
             <method.Icon className="size-4" />
-            {L.paidVia} {methodLabel}
+            {splitSummary ? `${L.paidViaSplit}: ${splitSummary}` : `${L.paidVia} ${methodLabel}`}
           </p>
           {t.note && (
             <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">

@@ -472,6 +472,9 @@ export default function StaffView() {
                 />
                 <span className="absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-muted-foreground">%</span>
               </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Commission is calculated on pre-GST revenue — after discounts, before GST.
+              </p>
               {addErrors.commissionPct && (
                 <p className="text-xs text-destructive">{addErrors.commissionPct}</p>
               )}
@@ -554,6 +557,9 @@ export default function StaffView() {
                 />
                 <span className="absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-muted-foreground">%</span>
               </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Commission is calculated on pre-GST revenue — after discounts, before GST.
+              </p>
               {editErrors.commissionPct && (
                 <p className="text-xs text-destructive">{editErrors.commissionPct}</p>
               )}

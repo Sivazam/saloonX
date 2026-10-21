@@ -2,32 +2,10 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
+import { uniqueMenuSlug } from "@/lib/slug"
 import { dateKey, round2, toBranchAdminDTO } from "@/lib/serialize"
 
 export const dynamic = "force-dynamic"
-
-/** Slugify "Glow & Go — Andheri West" → "glow-and-go-andheri-west" style. */
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
-}
-
-/** Deterministic tenant+locality slug, suffixed until platform-unique. */
-async function uniqueMenuSlug(tenantName: string, branchName: string, city?: string | null): Promise<string> {
-  const locality = branchName.includes("—") ? branchName.split("—").pop()!.trim() : branchName
-  const base = slugify(`${tenantName}-${locality || city || "salon"}`) || "salon"
-  let slug = base
-  for (let i = 0; i < 20; i++) {
-    const clash = await db.branch.findUnique({ where: { menuSlug: slug }, select: { id: true } })
-    if (!clash) return slug
-    slug = `${base}-${Math.random().toString(36).slice(2, 6)}`
-  }
-  return `${base}-${Date.now().toString(36)}`
-}
 
 /**
  * GET: branch list with 30-day stats.

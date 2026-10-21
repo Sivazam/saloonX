@@ -2,12 +2,14 @@
 
 import { jsPDF } from 'jspdf'
 import { formatDateTime, formatINR } from '@/lib/format'
+import { INR, PDFFont, registerPdfFonts } from '@/lib/pdf/pdf-font'
 import type { BranchProfileDTO, TransactionDTO } from '@/lib/types'
 
-/** jsPDF's built-in fonts cannot render the rupee sign — use "Rs." instead. */
+/** Money strings for PDFs — the embedded Noto Sans subset renders the ₹ glyph
+ *  (jsPDF's built-in helvetica is WinAnsi-only and has no U+20B9). */
 function rs(n: number): string {
   const isInteger = Math.abs(n - Math.round(n)) < 0.005
-  return `Rs. ${n.toLocaleString('en-IN', isInteger ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `${INR}${n.toLocaleString('en-IN', isInteger ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /** Split a GST amount into CGST + SGST such that the two halves ALWAYS sum
@@ -25,7 +27,8 @@ export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string
   lines.push(`*${b.name}*`)
   if (b.tenantName && b.tenantName !== b.name) lines.push(b.tenantName)
   if (b.gstin) lines.push(`GSTIN: ${b.gstin}`)
-  const docLabel = t.status === 'VOIDED' ? 'VOID Bill' : 'Bill'
+  const docLabel =
+    t.status === 'VOIDED' ? 'VOID Bill' : t.status === 'PENDING_SYNC' ? 'Provisional Bill' : 'Bill'
   lines.push(`${docLabel} ${t.billNo} \u00b7 ${formatDateTime(t.createdAt)}`)
   if (t.customerName || t.customerMobile) {
     lines.push(
@@ -38,18 +41,30 @@ export function buildReceiptText(t: TransactionDTO, b: BranchProfileDTO): string
   }
   lines.push('------------------------')
   lines.push(`Subtotal: ${formatINR(t.subtotal)}`)
-  if (t.discountPct > 0) lines.push(`Discount (${t.discountPct}%): \u2212${formatINR(t.discountAmount)}`)
+  if (t.discountAmount > 0) {
+    const label = t.discountFlat ? `Discount (${formatINR(t.discountFlat)})` : `Discount (${t.discountPct}%)`
+    lines.push(`${label}: \u2212${formatINR(t.discountAmount)}`)
+  }
   if (t.gstAmount > 0) {
     const { cgst, sgst } = splitGst(t.gstAmount)
     lines.push(`CGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(cgst)}`)
     lines.push(`SGST (${(t.gstPct / 2).toFixed(2)}%): ${formatINR(sgst)}`)
   }
+  if (t.tipAmount > 0) lines.push(`Tip: ${formatINR(t.tipAmount)}`)
   lines.push(`*Total: ${formatINR(t.total)}*`)
   if (t.status === 'VOIDED') {
     lines.push('*VOIDED*')
     if (t.voidReason) lines.push(`Reason: ${t.voidReason}`)
+  } else if (t.paymentMethod === 'SPLIT' && t.payments.length > 1) {
+    lines.push('*Paid via split payment*')
+    for (const p of t.payments) {
+      lines.push(`  ${p.method} ${formatINR(p.amount)}`)
+    }
   } else {
     lines.push(`Paid via ${t.paymentMethod}`)
+  }
+  if (t.status === 'PENDING_SYNC') {
+    lines.push('Provisional receipt \u2014 final bill number will be assigned on sync')
   }
   if (t.note) lines.push(`Note: ${t.note}`)
   if (b.receiptFooter) lines.push(b.receiptFooter)
@@ -72,6 +87,7 @@ function drawLogo(doc: jsPDF, dataUrl: string | null, W: number, y: number): num
 /** Build the SAME A5 receipt PDF used by Print-file / Download / Share — single source of truth. */
 function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a5' })
+  registerPdfFonts(doc)
   const W = 148 // A5 width mm
   const M = 14 // margin
   const right = W - M
@@ -89,11 +105,11 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   const logo = b.logo ?? b.tenantLogo ?? null
   if (logo) y = drawLogo(doc, logo, W, y + 4)
 
-  doc.setFont('helvetica', 'bold')
+  doc.setFont(PDFFont.Bold)
   doc.setFontSize(16)
   doc.text(b.name, W / 2, y, { align: 'center' })
   y += 6
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(PDFFont.Regular)
   doc.setFontSize(9)
   doc.setTextColor(90)
   if (b.tenantName && b.tenantName !== b.name) {
@@ -120,10 +136,30 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   dash()
   y += 6
   doc.setFontSize(10)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`${t.status === 'VOIDED' ? 'VOID Bill' : 'Bill'} ${t.billNo}`, M, y)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(PDFFont.Bold)
+  const docLabel =
+    t.status === 'VOIDED' ? 'VOID Bill' : t.status === 'PENDING_SYNC' ? 'Provisional Bill' : 'Bill'
+  doc.text(`${docLabel} ${t.billNo}`, M, y)
+  doc.setFont(PDFFont.Regular)
   doc.text(formatDateTime(t.createdAt), right, y, { align: 'right' })
+  // Provisional (offline-queued) bills: the customer leaves with a traceable
+  // promise — a bordered notice right under the bill number makes clear the
+  // OFFLINE-XXXX number is temporary.
+  if (t.status === 'PENDING_SYNC') {
+    y += 5
+    doc.setFontSize(8.5)
+    doc.setTextColor(160, 100, 10)
+    doc.setDrawColor(200, 150, 60)
+    doc.setLineWidth(0.5)
+    const notice = 'PROVISIONAL RECEIPT - final bill number will be assigned on sync'
+    const noticeW = doc.getTextWidth(notice) + 6
+    const noticeX = Math.max(M, W / 2 - noticeW / 2)
+    doc.roundedRect(noticeX, y - 3.6, noticeW, 6, 1.2, 1.2)
+    doc.text(notice, W / 2, y, { align: 'center' })
+    doc.setTextColor(0)
+    doc.setLineWidth(0.4)
+    doc.setFontSize(10)
+  }
   y += 6.5
   // Customer line (when the bill is tied to a customer).
   if (t.customerName || t.customerMobile) {
@@ -147,7 +183,7 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
       doc.addPage()
       y = 20
     }
-    doc.setFont('helvetica', 'normal')
+    doc.setFont(PDFFont.Regular)
     doc.text(`${item.serviceName} x${item.qty}`, M, y)
     doc.text(rs(item.price * item.qty), right, y, { align: 'right' })
     y += 6.5
@@ -158,12 +194,14 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
   dash()
   y += 7
   doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(PDFFont.Regular)
   doc.text('Subtotal', M, y)
   doc.text(rs(t.subtotal), right, y, { align: 'right' })
   y += 6
-  if (t.discountPct > 0) {
-    doc.text(`Discount (${t.discountPct}%)`, M, y)
+  if (t.discountAmount > 0) {
+    // Flat-₹ discounts print the amount; percentage discounts print the rate.
+    const label = t.discountFlat ? `Discount (${rs(t.discountFlat)})` : `Discount (${t.discountPct}%)`
+    doc.text(label, M, y)
     doc.text(`- ${rs(t.discountAmount)}`, right, y, { align: 'right' })
     y += 6
   }
@@ -180,12 +218,17 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
     doc.text(rs(sgst), right, y, { align: 'right' })
     y += 6
   }
-  doc.setFont('helvetica', 'bold')
+  if (t.tipAmount > 0) {
+    doc.text('Tip', M, y)
+    doc.text(rs(t.tipAmount), right, y, { align: 'right' })
+    y += 6
+  }
+  doc.setFont(PDFFont.Bold)
   doc.setFontSize(14)
   doc.text(t.status === 'VOIDED' ? 'Total (VOIDED)' : 'Total', M, y)
   doc.text(rs(t.total), right, y, { align: 'right' })
   y += 7
-  doc.setFont('helvetica', 'normal')
+  doc.setFont(PDFFont.Regular)
   doc.setFontSize(10)
   if (t.status === 'VOIDED') {
     doc.setTextColor(180, 30, 30)
@@ -197,6 +240,18 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
       y += wrapped.length * 4.5
     }
     doc.setTextColor(0)
+  } else if (t.payments.length > 1 || t.paymentMethod === 'SPLIT') {
+    // Split settlement — the per-method breakdown IS the payment record.
+    doc.setFont(PDFFont.Bold)
+    doc.text('SPLIT PAYMENT', M, y)
+    doc.setFont(PDFFont.Regular)
+    y += 5.5
+    for (const p of t.payments) {
+      const label = p.method === 'CASH' ? 'Cash' : p.method === 'UPI' ? 'UPI' : 'Card'
+      doc.text(label, M + 3, y)
+      doc.text(rs(p.amount), right, y, { align: 'right' })
+      y += 5.5
+    }
   } else {
     doc.text(`Paid via ${t.paymentMethod}`, M, y)
   }
@@ -235,11 +290,11 @@ function buildReceiptDoc(t: TransactionDTO, b: BranchProfileDTO): jsPDF {
     for (let p = 1; p <= pageCount; p++) {
       doc.setPage(p)
       doc.setTextColor(200, 40, 40)
-      doc.setFont('helvetica', 'bold')
+      doc.setFont(PDFFont.Bold)
       doc.setFontSize(56)
       doc.text('VOID', W / 2, 105, { align: 'center', angle: 35 })
       doc.setTextColor(0)
-      doc.setFont('helvetica', 'normal')
+      doc.setFont(PDFFont.Regular)
       doc.setFontSize(10)
     }
   }

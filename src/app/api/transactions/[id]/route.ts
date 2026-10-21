@@ -13,7 +13,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { id } = await params
   const transaction = await db.transaction.findUnique({
     where: { id },
-    include: { items: true },
+    include: { items: true, payments: true },
   })
   if (!transaction) {
     return NextResponse.json({ error: "Bill not found" }, { status: 404 })

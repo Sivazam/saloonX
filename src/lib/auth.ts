@@ -1,5 +1,5 @@
-import { randomBytes } from "crypto"
-import { cookies } from "next/headers"
+import { createHash, randomBytes } from "crypto"
+import { cookies, headers } from "next/headers"
 import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import type { BranchRef } from "@/lib/types"
@@ -20,11 +20,17 @@ export interface SessionUser {
   branches: BranchRef[] // APPROVED, active branches this user can operate
 }
 
+/** Sessions are stored hashed (sha256) — a leaked database file must not
+ *  yield live 30-day login cookies for every staff member. */
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex")
+}
+
 /** Create a DB session row for a user (optionally bound to a branch context) and return the opaque token. */
 export async function createSession(userId: string, branchId: string | null): Promise<{ token: string; expiresAt: Date }> {
   const token = randomBytes(32).toString("hex")
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000)
-  await db.session.create({ data: { token, userId, branchId, expiresAt } })
+  await db.session.create({ data: { token: hashToken(token), userId, branchId, expiresAt } })
   return { token, expiresAt }
 }
 
@@ -38,7 +44,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!token) return null
 
   const session = await db.session.findUnique({
-    where: { token },
+    where: { token: hashToken(token) },
     include: {
       user: {
         include: {
@@ -93,6 +99,24 @@ export type ApiAuth =
  *   if (!auth.user) return auth.response
  */
 export async function requireApiUser(roles?: string[]): Promise<ApiAuth> {
+  // Cheap CSRF guard for cookie-authenticated endpoints: when the browser
+  // tells us the request is cross-site (Origin header present and foreign,
+  // or Sec-Fetch-Site: cross-site), refuse it. Same-origin fetches and
+  // non-browser clients (no Origin) pass — SameSite=Lax already covers the rest.
+  const hdrs = await headers()
+  const reject = () => NextResponse.json({ error: "Cross-site request rejected" }, { status: 403 })
+  const fetchSite = hdrs.get("sec-fetch-site")
+  if (fetchSite === "cross-site") return { response: reject() }
+  const origin = hdrs.get("origin")
+  if (origin) {
+    const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host")
+    try {
+      const originHost = new URL(origin).host
+      if (host && originHost !== host) return { response: reject() }
+    } catch {
+      return { response: reject() }
+    }
+  }
   const user = await getSessionUser()
   if (!user) {
     return { response: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) }

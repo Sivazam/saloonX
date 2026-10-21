@@ -122,7 +122,13 @@ export async function POST(request: Request) {
   } catch (e) {
     // Roll back the Firebase account so the email stays usable.
     await deleteFirebaseUser(firebase.idToken)
-    const msg = (e as { code?: string }).code === "P2002" ? "This email already has a SaloonX account" : (e as Error).message
+    console.error("[api/staff] create failed", e)
+    // P2002 = unique-constraint clash (friendly); anything else is an
+    // internal detail (SQLite/Prisma internals) that must not reach the client.
+    const msg =
+      (e as { code?: string }).code === "P2002"
+        ? "This email already has a SaloonX account"
+        : "Could not save — please retry"
     return NextResponse.json({ error: friendlyAuthMessage(msg) }, { status: 409 })
   }
 }

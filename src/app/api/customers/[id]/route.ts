@@ -29,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const transactions = await db.transaction.findMany({
     where: { customerId: id },
-    include: { items: true },
+    include: { items: true, payments: true },
     orderBy: { createdAt: "desc" },
     take: 100,
   })
@@ -106,7 +106,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       })
       if (clash) {
         return NextResponse.json(
-          { error: "Another customer already uses this mobile — merge profiles instead of overwriting." },
+          {
+            error:
+              "Another customer already uses this mobile — merge the two profiles instead (open the customer → Merge with another customer).",
+          },
           { status: 409 },
         )
       }
@@ -173,16 +176,21 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   await db.$transaction(async (tx) => {
     // 1) Drop the branch-visit colour rows — pure PII, no audit value.
     await tx.branchVisit.deleteMany({ where: { customerId: id } })
-    // 2) Drop this customer's unredeemed QR-menu leads (mobile + name PII).
+    // 2) Drop this customer's unredeemed QR-menu leads, and anonymise the
+    //    redeemed ones (the redemption linkage is business data, but the
+    //    stored name/mobile on them is PII that must not survive erasure).
     await tx.menuLead.deleteMany({ where: { customerId: id, redeemedAt: null } })
-    // 3) Tombstone the customer row itself.
+    await tx.menuLead.updateMany({ where: { customerId: id }, data: { name: null, mobile: "<erased>" } })
+    // 3) Tombstone the customer row itself. The tombstone mobile must be
+    //    UNIQUE per row — `@@unique([tenantId, mobile])` would 500 on the
+    //    second erasure in the same tenant otherwise.
     await tx.customer.update({
       where: { id },
       data: {
         name: null,
         birthday: null,
         lastWishAt: null,
-        mobile: "<erased>",
+        mobile: `<erased:${id.slice(-12)}>`,
       },
     })
     // 4) Anonymise the customer-name snapshot on historical bills (audit

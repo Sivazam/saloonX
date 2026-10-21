@@ -26,6 +26,7 @@ import {
   Cake,
   Check,
   FileText,
+  Loader2,
   MessageCircle,
   ReceiptText,
 } from 'lucide-react'
@@ -50,21 +51,28 @@ import type {
   MethodSummary,
   MonthlyStatDTO,
   MonthlyStatsResponse,
-  PaymentMethod,
   StatsResponse,
   TransactionDTO,
   TransactionsResponse,
 } from '@/lib/types'
-import { useAppStore } from '@/store/use-app-store'
+import { useAppStore, useT } from '@/store/use-app-store'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+// Aliased — `Tooltip` is already the recharts tooltip in this file's charts.
+import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { canShareFiles } from '@/components/billing/receipt-pdf'
 import { EmptyState, METHOD_META, MethodBadge, formatAxisINR, initials, parseDateKey } from './ui-atoms'
 import { RangePicker, computePreset, detectPreset, type DateRange } from './range-picker'
-import { downloadSummaryReportPdf, summaryReportFile, type ReportContext } from './report-pdf'
+import {
+  downloadSummaryReportPdf,
+  summaryReportFile,
+  type ReportContext,
+  type ReportFileScope,
+} from './report-pdf'
 import { BusyHoursCard } from './busy-hours-card'
 import { BirthdayCampaignCard } from './birthday-campaign-card'
 import { BranchInsightsCard } from './branch-insights-card'
+import { OnboardingCard } from './onboarding-card'
 import type { BirthdayCampaignResponse, BranchCompareResponse } from '@/lib/types'
 
 const DAY_MS = 86_400_000
@@ -76,6 +84,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 
 const dayFmt = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' })
 
+// English preset labels — used for the shared-PDF / WhatsApp-note label only
+// (jsPDF's built-in font can't render Devanagari). On-screen labels come from
+// the i18n dict inside DashboardView.
 const PRESET_LABEL: Record<string, string> = {
   today: 'Today',
   yesterday: 'Yesterday',
@@ -161,6 +172,7 @@ function KpiCard({
    *  neutral but discount leakage dropping is good). Flips the colour logic. */
   deltaInvert?: boolean
 }) {
+  const L = useT()
   const hasDelta = delta != null && Number.isFinite(delta)
   // Up = green-good by default; flip when deltaInvert (down = green-good).
   const isGood = hasDelta && (deltaInvert ? delta < 0 : delta > 0)
@@ -192,7 +204,7 @@ function KpiCard({
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
             )}
-            title="vs the same-length prior window"
+            title={L.admKpiVsLast}
           >
             {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
           </motion.span>
@@ -215,26 +227,56 @@ function pctDelta(curr: number, prev: number): number | null {
 
 /* ── Payment split ──────────────────────────────────────────────────────── */
 
+/** Whole percentages that sum to exactly 100 when total > 0 — each method
+ *  no longer rounds independently (33.3 + 33.3 + 33.3 used to render 99%).
+ *  Largest-remainder: floor everything, then hand the leftover points to the
+ *  biggest fractional remainders. */
+function largestRemainderPercents(amounts: number[], total: number): number[] {
+  if (total <= 0 || amounts.length === 0) return amounts.map(() => 0)
+  const exact = amounts.map((a) => (a / total) * 100)
+  const whole = exact.map((e) => Math.floor(e))
+  let left = 100 - whole.reduce((s, w) => s + w, 0)
+  const byFrac = exact
+    .map((e, i) => ({ i, frac: e - Math.floor(e) }))
+    .sort((a, b) => b.frac - a.frac)
+  for (const { i } of byFrac) {
+    if (left <= 0) break
+    whole[i] += 1
+    left -= 1
+  }
+  return whole
+}
+
 function PaymentSplitCard({
   byMethod,
   total,
 }: {
-  byMethod: Record<PaymentMethod, MethodSummary>
+  /** Widened to a string map so the SPLIT bucket renders whether or not the
+   *  shared PaymentMethod union has gained the member yet (billing v1.1). */
+  byMethod: Record<string, MethodSummary | undefined>
   total: number
 }) {
-  const methods: PaymentMethod[] = ['CASH', 'UPI', 'CARD']
+  const L = useT()
+  // Fixed order; SPLIT (mixed-tender bills) renders once it has activity.
+  const methods = (['CASH', 'UPI', 'CARD', 'SPLIT'] as const).filter(
+    (m) => m !== 'SPLIT' || (byMethod.SPLIT?.count ?? 0) > 0 || (byMethod.SPLIT?.amount ?? 0) > 0,
+  )
+  const pcts = largestRemainderPercents(
+    methods.map((m) => byMethod[m]?.amount ?? 0),
+    total,
+  )
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold leading-tight">Payment Split</h2>
-        <span className="tnum text-xs text-muted-foreground">{formatINR(total)} total</span>
+        <h2 className="text-sm font-semibold leading-tight">{L.admSecPaymentSplit}</h2>
+        <span className="tnum text-xs text-muted-foreground">{L.admPsTotal.replace('{amount}', formatINR(total))}</span>
       </div>
       <div className="mt-4 space-y-4">
         {methods.map((m, i) => {
-          const { amount, count } = byMethod[m]
+          const { amount, count } = byMethod[m] ?? { amount: 0, count: 0 }
           const meta = METHOD_META[m]
           const Icon = meta.icon
-          const pct = total > 0 ? Math.round((amount / total) * 100) : 0
+          const pct = pcts[i]
           return (
             <div key={m}>
               <div className="flex items-center gap-2.5">
@@ -254,7 +296,7 @@ function PaymentSplitCard({
                   />
                 </div>
                 <span className="tnum w-[4.5rem] shrink-0 text-right text-[11px] text-muted-foreground">
-                  {count} bills · {pct}%
+                  {L.admPsRow.replace('{count}', String(count)).replace('{pct}', String(pct))}
                 </span>
               </div>
             </div>
@@ -268,13 +310,14 @@ function PaymentSplitCard({
 /* ── Per-branch breakdown (franchise-wide scope only) ───────────────────── */
 
 function BranchSplitCard({ byBranch }: { byBranch: StatsResponse['byBranch'] }) {
+  const L = useT()
   const max = byBranch[0]?.revenue || 1
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center gap-2">
         <Building2 className="size-4 text-muted-foreground" aria-hidden />
-        <h2 className="text-sm font-semibold leading-tight">Branches</h2>
-        <span className="micro ml-auto text-muted-foreground">{byBranch.length} active</span>
+        <h2 className="text-sm font-semibold leading-tight">{L.admNavBranches}</h2>
+        <span className="micro ml-auto text-muted-foreground">{L.admBsActive.replace('{n}', String(byBranch.length))}</span>
       </div>
       <ul className="mt-4 space-y-3.5">
         {byBranch.map((b, i) => {
@@ -286,7 +329,7 @@ function BranchSplitCard({ byBranch }: { byBranch: StatsResponse['byBranch'] }) 
                 <p className="min-w-0 flex-1 truncate text-sm font-medium" title={b.name}>
                   {short}
                 </p>
-                <p className="tnum shrink-0 text-xs text-muted-foreground">{b.bills} bills</p>
+                <p className="tnum shrink-0 text-xs text-muted-foreground">{L.admXBills.replace('{n}', String(b.bills))}</p>
                 <p className="tnum shrink-0 text-sm font-bold">{formatINR(b.revenue)}</p>
               </div>
               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -315,6 +358,7 @@ interface TrendTipProps {
 }
 
 function TrendTooltip({ active, payload, label }: TrendTipProps) {
+  const L = useT()
   if (!active || !payload?.length) return null
   const get = (key: string) => payload.find((p) => p.dataKey === key)?.value ?? 0
   const profit = get('profit')
@@ -322,15 +366,15 @@ function TrendTooltip({ active, payload, label }: TrendTipProps) {
     <div className="rounded-lg border bg-popover px-3 py-2 text-popover-foreground shadow-md">
       <p className="text-xs font-semibold">{label}</p>
       <p className="tnum mt-1 text-[11px]">
-        <span className="text-muted-foreground">Revenue </span>
+        <span className="text-muted-foreground">{L.admKpiRevenue} </span>
         <span className="font-semibold">{formatINR(get('revenue'))}</span>
       </p>
       <p className="tnum text-[11px]">
-        <span className="text-muted-foreground">Expenses </span>
+        <span className="text-muted-foreground">{L.admNavExpenses} </span>
         <span className="font-semibold">{formatINR(get('expenses'))}</span>
       </p>
       <p className="tnum text-[11px]">
-        <span className="text-muted-foreground">Profit </span>
+        <span className="text-muted-foreground">{L.admWordProfit} </span>
         <span className={cn('font-bold', profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
           {formatINR(profit)}
         </span>
@@ -340,6 +384,7 @@ function TrendTooltip({ active, payload, label }: TrendTipProps) {
 }
 
 function ProfitTrendCard({ months, loading }: { months: MonthlyStatDTO[]; loading: boolean }) {
+  const L = useT()
   if (loading) {
     return (
       <div className="hairline rounded-xl bg-card p-4 lg:p-5">
@@ -352,28 +397,28 @@ function ProfitTrendCard({ months, loading }: { months: MonthlyStatDTO[]; loadin
   const avgProfit = months.length > 0 ? totalProfit / months.length : 0
   const axisTick = { fontSize: 11, fill: 'var(--muted-foreground)' }
   return (
-    <section className="hairline rounded-xl bg-card p-4 lg:p-5" aria-label="Profit trend by month">
+    <section className="hairline rounded-xl bg-card p-4 lg:p-5" aria-label={L.admPtAria}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold leading-tight">Profit trend</h2>
-          <p className="micro text-muted-foreground">last {months.length} months · revenue vs expenses</p>
+          <h2 className="text-sm font-semibold leading-tight">{L.admSecProfitTrend}</h2>
+          <p className="micro text-muted-foreground">{L.admPtSub.replace('{n}', String(months.length))}</p>
         </div>
         {/* Mobile: the avg-profit pill and the legend WRAP onto separate rows
             instead of forcing a 380px+ header (page overflow at 390px). */}
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="tnum shrink-0 rounded-full border bg-background px-2.5 py-1 text-[11px] font-semibold">
-            Avg profit <span className={avgProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{formatINR(avgProfit)}</span>
-            <span className="text-muted-foreground">/mo</span>
+            {L.admPtAvg} <span className={avgProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{formatINR(avgProfit)}</span>
+            <span className="text-muted-foreground">{L.admPtPerMo}</span>
           </span>
           <span className="micro flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-[3px] bg-[var(--chart-1)]" aria-hidden />Revenue
+              <span className="size-2.5 rounded-[3px] bg-[var(--chart-1)]" aria-hidden />{L.admKpiRevenue}
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-[3px] bg-[var(--chart-2)]" aria-hidden />Expenses
+              <span className="size-2.5 rounded-[3px] bg-[var(--chart-2)]" aria-hidden />{L.admNavExpenses}
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-0.5 w-3 rounded-full bg-[var(--chart-3)]" aria-hidden />Profit
+              <span className="h-0.5 w-3 rounded-full bg-[var(--chart-3)]" aria-hidden />{L.admWordProfit}
             </span>
           </span>
         </div>
@@ -411,6 +456,7 @@ interface ChartTipProps {
 }
 
 function ChartTooltip({ active, payload, label }: ChartTipProps) {
+  const L = useT()
   if (!active || !payload?.length) return null
   const point = payload[0]
   return (
@@ -419,12 +465,13 @@ function ChartTooltip({ active, payload, label }: ChartTipProps) {
       <p className="tnum text-sm font-bold text-rose-600 dark:text-rose-400">
         {formatINR(point.value ?? 0)}
       </p>
-      <p className="tnum text-[11px] text-muted-foreground">{point.payload?.bills ?? 0} bills</p>
+      <p className="tnum text-[11px] text-muted-foreground">{L.admXBills.replace('{n}', String(point.payload?.bills ?? 0))}</p>
     </div>
   )
 }
 
 function RevenueChart({ daily, useBars }: { daily: StatsResponse['daily']; useBars: boolean }) {
+  const L = useT()
   const data = useMemo(
     () => daily.map((d) => ({ ...d, day: dayFmt.format(parseDateKey(d.date)) })),
     [daily],
@@ -433,8 +480,8 @@ function RevenueChart({ daily, useBars }: { daily: StatsResponse['daily']; useBa
   return (
     <div className="hairline h-full rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold leading-tight">Revenue</h2>
-        <span className="micro text-muted-foreground">by day</span>
+        <h2 className="text-sm font-semibold leading-tight">{L.admKpiRevenue}</h2>
+        <span className="micro text-muted-foreground">{L.admRcByDay}</span>
       </div>
       <div className="mt-3 h-64">
         <ResponsiveContainer width="100%" height="100%">
@@ -489,15 +536,16 @@ function RevenueChart({ daily, useBars }: { daily: StatsResponse['daily']; useBa
 /* ── Top services / staff performance ────────────────────────────────────── */
 
 function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
+  const L = useT()
   const max = top[0]?.revenue || 1
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
-      <h2 className="text-sm font-semibold leading-tight">Top Services</h2>
+      <h2 className="text-sm font-semibold leading-tight">{L.admSecTopServices}</h2>
       {top.length === 0 ? (
         <EmptyState
           icon={DuoSparkle}
-          title="No services sold"
-          hint="No billable services in this range yet."
+          title={L.admTsEmpty}
+          hint={L.admTsEmptyHint}
           className="py-8"
         />
       ) : (
@@ -510,7 +558,7 @@ function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{s.name}</p>
-                  <p className="tnum text-xs text-muted-foreground">{s.count} sold</p>
+                  <p className="tnum text-xs text-muted-foreground">{L.admTsSold.replace('{n}', String(s.count))}</p>
                 </div>
                 <p className="tnum text-sm font-bold">{formatINR(s.revenue)}</p>
               </div>
@@ -532,24 +580,25 @@ function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
 }
 
 function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
+  const L = useT()
   const totalCommission = top.reduce((a, s) => a + s.commission, 0)
   const anyCommission = top.some((s) => s.commissionPct > 0)
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold leading-tight">Staff Performance</h2>
+        <h2 className="text-sm font-semibold leading-tight">{L.admSecStaffPerf}</h2>
         {anyCommission && (
           <Badge className="tnum gap-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
             <BadgePercent className="size-3" aria-hidden />
-            Commission {formatINR(totalCommission)}
+            {L.admSpCommission} {formatINR(totalCommission)}
           </Badge>
         )}
       </div>
       {top.length === 0 ? (
         <EmptyState
           icon={DuoUsers}
-          title="No staff activity"
-          hint="No bills were created by staff in this range."
+          title={L.admSpEmpty}
+          hint={L.admSpEmptyHint}
           className="py-8"
         />
       ) : (
@@ -565,10 +614,10 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{s.name}</p>
                 <p className="tnum text-xs text-muted-foreground">
-                  {s.bills} {s.bills === 1 ? 'bill' : 'bills'}
+                  {s.bills} {s.bills === 1 ? L.admWordBill : L.admWordBills}
                   {s.commissionPct > 0 && (
                     <span className="text-emerald-600 dark:text-emerald-400">
-                      {' · '}{s.commissionPct}% commission
+                      {' · '}{L.admSpPct.replace('{n}', String(s.commissionPct))}
                     </span>
                   )}
                 </p>
@@ -587,7 +636,7 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
       )}
       {anyCommission && (
         <p className="mt-4 border-t pt-3 text-[11px] leading-relaxed text-muted-foreground">
-          Commission is calculated on the selected range's revenue at each staff member's current rate.
+          {L.admSpFootnote}
         </p>
       )}
     </div>
@@ -605,6 +654,7 @@ function formatBirthday(mmdd: string): string {
 }
 
 function BirthdayGreetingButton({ c, tenantName }: { c: BirthdayCustomerDTO; tenantName: string }) {
+  const L = useT()
   const first = (c.name ?? 'there').split(' ')[0]
   const queryClient = useQueryClient()
   const [justWished, setJustWished] = useState(false)
@@ -637,8 +687,8 @@ function BirthdayGreetingButton({ c, tenantName }: { c: BirthdayCustomerDTO; ten
       onClick={wish}
       aria-label={
         wishedRecently
-          ? `Birthday wish already sent to ${c.name ?? c.mobile} — send again on WhatsApp`
-          : `Send birthday wishes to ${c.name ?? c.mobile} on WhatsApp`
+          ? L.admBdAriaWished.replace('{name}', c.name ?? c.mobile)
+          : L.admBdAriaWish.replace('{name}', c.name ?? c.mobile)
       }
       className={
         wishedRecently
@@ -647,7 +697,7 @@ function BirthdayGreetingButton({ c, tenantName }: { c: BirthdayCustomerDTO; ten
       }
     >
       {wishedRecently ? <Check className="size-3.5" aria-hidden /> : <MessageCircle className="size-3.5" aria-hidden />}
-      {wishedRecently ? 'Wished' : 'Wish'}
+      {wishedRecently ? L.admBdWished : L.admBdWish}
     </Button>
   )
 }
@@ -663,22 +713,23 @@ function BirthdaysCard({
   tenantName: string
   onManage: () => void
 }) {
+  const L = useT()
   return (
-    <section className="hairline overflow-hidden rounded-xl bg-card" aria-label="Upcoming birthdays">
+    <section className="hairline overflow-hidden rounded-xl bg-card" aria-label={L.admBdAria}>
       <header className="flex items-center gap-2.5 border-b bg-muted/40 px-4 py-3">
         <span className="flex size-8 items-center justify-center rounded-lg border border-rose-200/70 bg-rose-50 text-rose-600 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
           <Cake className="size-4" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-bold tracking-tight">Birthdays this week</h3>
+          <h3 className="text-[15px] font-bold tracking-tight">{L.admBdTitle}</h3>
           <p className="text-xs text-muted-foreground">
             {customers.length > 0
-              ? `${customers.length} customer${customers.length === 1 ? '' : 's'} celebrating — send them a wish, win the visit.`
-              : 'No birthdays in the next 7 days.'}
+              ? (customers.length === 1 ? L.admBdSubOne : L.admBdSubMany).replace('{n}', String(customers.length))
+              : L.admBdNone}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="h-8 gap-1 text-muted-foreground" onClick={onManage}>
-          Customers
+          {L.admNavCustomers}
           <ArrowRight className="size-3.5" aria-hidden />
         </Button>
       </header>
@@ -691,7 +742,7 @@ function BirthdaysCard({
         </div>
       ) : customers.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-          Add birthdays from the Customers view to get reminder lists here. 🎈
+          {L.admBdEmptyHint}
         </p>
       ) : (
         <ul className="max-h-64 divide-y overflow-y-auto">
@@ -719,13 +770,13 @@ function BirthdaysCard({
                   {c.name ?? '—'}
                   {c.daysUntil === 0 && (
                     <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                      TODAY 🎉
+                      {L.admBdToday}
                     </span>
                   )}
                 </p>
                 <p className="tnum truncate text-[11px] text-muted-foreground">
                   +91 {c.mobile}
-                  {c.daysUntil > 0 && ` · in ${c.daysUntil}d`}
+                  {c.daysUntil > 0 && ` · ${L.admBdIn.replace('{n}', String(c.daysUntil))}`}
                   {c.homeBranchName ? ` · ${c.homeBranchName.split('—')[1]?.trim() || c.homeBranchName}` : ''}
                 </p>
               </div>
@@ -751,12 +802,13 @@ function RecentBillsCard({
   showBranch: boolean
   onViewAll: () => void
 }) {
+  const L = useT()
   return (
     <div className="hairline mt-4 rounded-xl bg-card shadow-sm">
       <div className="flex items-center justify-between px-4 py-3.5 lg:px-5">
-        <h2 className="text-sm font-semibold leading-tight">Recent Bills</h2>
+        <h2 className="text-sm font-semibold leading-tight">{L.admSecRecentBills}</h2>
         <Button variant="ghost" size="sm" onClick={onViewAll}>
-          View all
+          {L.admRbViewAll}
           <ArrowRight aria-hidden />
         </Button>
       </div>
@@ -772,8 +824,8 @@ function RecentBillsCard({
         ) : bills.length === 0 ? (
           <EmptyState
             icon={DuoReceipt}
-            title="No bills in this range"
-            hint="Create a bill from the Billing tab and it will show up here."
+            title={L.admRbEmpty}
+            hint={L.admRbEmptyHint}
           />
         ) : (
           bills.map((t) => (
@@ -792,7 +844,7 @@ function RecentBillsCard({
               </p>
               <p className="min-w-0 flex-1 truncate text-sm">
                 {t.customerName || t.customerMobile || (
-                  <span className="italic text-muted-foreground">Walk-in</span>
+                  <span className="italic text-muted-foreground">{L.admRbWalkIn}</span>
                 )}
               </p>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -830,6 +882,7 @@ function ProfitStrip({
   expenses: { total: number; count: number; byCategory: Record<string, { amount: number; count: number }> }
   onManageExpenses: () => void
 }) {
+  const L = useT()
   const profit = round2(revenue - expenses.total)
   const margin = revenue > 0 ? Math.round((profit / revenue) * 100) : 0
   const cats = Object.entries(expenses.byCategory).sort((a, b) => b[1].amount - a[1].amount).slice(0, 4)
@@ -843,26 +896,26 @@ function ProfitStrip({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold leading-tight">
           <DuoTrendUp className="size-5 text-primary" aria-hidden />
-          Profit & Loss
+          {L.admPlTitle}
         </h2>
         <Button variant="outline" size="sm" className="h-9 gap-1.5" onClick={onManageExpenses}>
           <ReceiptText className="size-3.5" aria-hidden />
-          Manage Expenses
+          {L.admPlManage}
         </Button>
       </div>
       <div className="mt-4 grid grid-cols-3 items-center gap-2 sm:gap-4">
         <div>
-          <p className="micro text-muted-foreground">Revenue</p>
+          <p className="micro text-muted-foreground">{L.admKpiRevenue}</p>
           <p className="tnum mt-0.5 text-base font-bold sm:text-xl">{formatINR(revenue)}</p>
         </div>
         <div className="text-center">
-          <p className="micro text-muted-foreground">Expenses</p>
+          <p className="micro text-muted-foreground">{L.admNavExpenses}</p>
           <p className="tnum mt-0.5 text-base font-bold text-rose-600 sm:text-xl dark:text-rose-400">
             −{formatINR(expenses.total)}
           </p>
         </div>
         <div className="text-right">
-          <p className="micro text-muted-foreground">Net Profit</p>
+          <p className="micro text-muted-foreground">{L.admPlNetProfit}</p>
           <p
             className={`tnum mt-0.5 text-base font-bold sm:text-xl ${
               profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'
@@ -883,7 +936,7 @@ function ProfitStrip({
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
         <span>
-          Margin:{' '}
+          {L.admPlMargin}:{' '}
           <span className={`tnum font-bold ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
             {margin}%
           </span>
@@ -896,7 +949,7 @@ function ProfitStrip({
         ))}
         {expenses.count === 0 && (
           <span className="italic">
-            No expenses logged yet — add rent, supplies & salaries for a true profit line.
+            {L.admPlNoExpenses}
           </span>
         )}
       </div>
@@ -1023,6 +1076,7 @@ function CustomerInsightsCard({
 /* ── Discount Analytics — how much the salon is giving away ──────────────── */
 
 function DiscountInsightsCard({ discounts }: { discounts: StatsResponse['discounts'] }) {
+  const L = useT()
   const leakageTone =
     discounts.leakagePct === 0
       ? 'text-muted-foreground'
@@ -1035,26 +1089,26 @@ function DiscountInsightsCard({ discounts }: { discounts: StatsResponse['discoun
         <span className="flex size-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <DuoGift className="size-5" aria-hidden />
         </span>
-        <h2 className="text-sm font-semibold leading-tight">Discount Analytics</h2>
+        <h2 className="text-sm font-semibold leading-tight">{L.admDiscTitle}</h2>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <div className="rounded-sm bg-muted/50 p-2.5">
-          <p className="micro text-[10px] text-muted-foreground">Given away</p>
+          <p className="micro text-[10px] text-muted-foreground">{L.admDiscGiven}</p>
           <p className="tnum mt-0.5 text-lg font-bold">{formatINR(discounts.totalAmount)}</p>
         </div>
         <div className="rounded-sm bg-muted/50 p-2.5">
-          <p className="micro text-[10px] text-muted-foreground">Bills discounted</p>
+          <p className="micro text-[10px] text-muted-foreground">{L.admDiscBills}</p>
           <p className="tnum mt-0.5 text-lg font-bold">{discounts.billsWithDiscount}</p>
-          <p className="text-[10px] text-muted-foreground tnum">{discounts.avgPct}% of bills</p>
+          <p className="text-[10px] text-muted-foreground tnum">{L.admDiscPct.replace('{n}', String(discounts.avgPct))}</p>
         </div>
         <div className="col-span-2 rounded-sm bg-muted/50 p-2.5">
-          <p className="micro text-[10px] text-muted-foreground">Revenue leakage</p>
+          <p className="micro text-[10px] text-muted-foreground">{L.admDiscLeakage}</p>
           <p className={cn('tnum mt-0.5 text-2xl font-bold', leakageTone)}>
             {discounts.leakagePct}%
           </p>
           <p className="text-[10px] text-muted-foreground">
-            of gross subtotal waived by discounts
+            {L.admDiscLeakageHint}
           </p>
         </div>
       </div>
@@ -1078,8 +1132,8 @@ function DiscountInsightsCard({ discounts }: { discounts: StatsResponse['discoun
         </div>
         <div className="mt-1 flex justify-between text-[10px] text-muted-foreground tnum">
           <span>0%</span>
-          <span>5% healthy</span>
-          <span>10%+ review</span>
+          <span>{L.admDiscHealthy}</span>
+          <span>{L.admDiscReview}</span>
         </div>
       </div>
     </div>
@@ -1092,9 +1146,26 @@ export default function DashboardView() {
   const setView = useAppStore((s) => s.setView)
   const user = useAppStore((s) => s.user)
   const scopeBranches = useAppStore((s) => s.branches)
+  const L = useT()
   const [range, setRange] = useState<DateRange>(() => computePreset('7d'))
   /** null = whole franchise; otherwise a branchId from scopeBranches. */
   const [branchScope, setBranchScope] = useState<string | null>(null)
+
+  // ── Hero header copy (greeting follows the staff language) ──────────────
+  const lang = useAppStore((s) => s.lang)
+  const greeting = () => {
+    const h = new Date().getHours()
+    if (h >= 5 && h < 12) return L.admGreetMorning
+    if (h < 17) return L.admGreetAfternoon
+    if (h < 21) return L.admGreetEvening
+    return L.admGreetNight
+  }
+  const todayLabel = () =>
+    new Intl.DateTimeFormat(lang === 'hi' ? 'hi-IN' : 'en-IN', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }).format(new Date())
 
   const scopeParam = branchScope ? `&branchId=${branchScope}` : ''
   const statsQ = useQuery({
@@ -1143,15 +1214,25 @@ export default function DashboardView() {
   )
 
   const preset = detectPreset(range)
-  const rangeLabel =
+  // English label for the share-PDF / WhatsApp note — jsPDF's built-in font
+  // can't render Devanagari, so anything fed to report-pdf stays English.
+  const rangeLabelEn =
     preset === 'custom'
       ? `${formatDate(`${range.from}T00:00:00`)} – ${formatDate(`${range.to}T00:00:00`)}`
       : (PRESET_LABEL[preset] ?? 'Range')
+  const presetLabels: Record<string, string> = {
+    today: L.admRangeToday,
+    yesterday: L.admRangeYesterday,
+    '7d': L.admRangeLast7,
+    '30d': L.admRangeLast30,
+    month: L.admRangeMonthLabel,
+  }
+  const rangeLabel = preset === 'custom' ? rangeLabelEn : (presetLabels[preset] ?? L.admRangeFallback)
 
   const scopeName = branchScope
     ? scopeBranches.find((b) => b.id === branchScope)?.name
-    : 'All branches'
-  const scopeShort = scopeName === 'All branches' ? 'All branches' : (scopeName?.split('—')[1]?.trim() || scopeName)
+    : L.admAllBranches
+  const scopeShort = branchScope ? (scopeName?.split('—')[1]?.trim() || scopeName) : L.admAllBranches
 
   /** Report branding context — branch-scoped or franchise-wide. */
   const reportCtx: ReportContext = branchScope
@@ -1166,6 +1247,18 @@ export default function DashboardView() {
         tenantName: user?.tenantName ?? null,
       }
 
+  /** Filename scope — SaloonX-Summary-{scope}-{from}-to-{to}.pdf */
+  const reportFileScope: ReportFileScope = {
+    scope: branchScope ? (scopeName ?? 'SaloonX') : 'All-Branches',
+    from: range.from,
+    to: range.to,
+  }
+
+  /** Franchise-wide view has no single owner to WhatsApp — the note targets
+   *  the scoped branch's owner, so require a branch pick first. Single-branch
+   *  franchises keep the button (their scope is unambiguous). */
+  const whatsappScopeBlocked = scopeBranches.length > 1 && !branchScope
+
   /**
    * Share the range summary as a PDF REPORT — never plain text.
    * Mobile: the PDF goes to the native share sheet (Web Share L2).
@@ -1174,32 +1267,41 @@ export default function DashboardView() {
   const shareReport = () => {
     const s = statsQ.data
     if (!s) return
-    const file = summaryReportFile(s, reportCtx, rangeLabel)
+    const file = summaryReportFile(s, reportCtx, rangeLabelEn, reportFileScope)
     if (canShareFiles(file) && typeof navigator.share === 'function') {
       void navigator
         .share({
           files: [file],
-          title: `Business Summary — ${scopeShort}`,
-          text: `${reportCtx.name} · ${rangeLabel} report`,
+          title: L.admShareTitle.replace('{scope}', scopeShort ?? ''),
+          text: L.admShareText.replace('{name}', reportCtx.name).replace('{range}', rangeLabel),
         })
         .catch(() => undefined) // user dismissed the sheet — not an error
       return
     }
-    downloadSummaryReportPdf(s, reportCtx, rangeLabel)
-    toast.success('Summary report downloaded', {
+    downloadSummaryReportPdf(s, reportCtx, rangeLabelEn, reportFileScope)
+    toast.success(L.admToastReportDl, {
       description: `${scopeShort} · ${rangeLabel}`,
     })
   }
 
-  /** Quick WhatsApp note to the owner (report PDF travels via the Share button). */
+  /** Quick WhatsApp note to the owner (report PDF travels via the Share button).
+   *  Only meaningful when a SPECIFIC branch is scoped — in the franchise-wide
+   *  view there is no single owner to send it to (the button is disabled). */
   const whatsappNote = () => {
     const s = statsQ.data
-    if (!s) return
+    if (!s || whatsappScopeBlocked) return
     const ownerMobile = branchQ.data?.branch.ownerMobile?.replace(/\D/g, '')
+    const split = (s.byMethod as Record<string, MethodSummary | undefined>).SPLIT
+    const methodLine = [
+      `Cash ${formatINR(s.byMethod.CASH.amount)}`,
+      `UPI ${formatINR(s.byMethod.UPI.amount)}`,
+      `Card ${formatINR(s.byMethod.CARD.amount)}`,
+      ...(split && split.count > 0 ? [`Split ${formatINR(split.amount)}`] : []),
+    ].join(' · ')
     const lines = [
-      `*${reportCtx.name} — ${rangeLabel}*`,
+      `*${reportCtx.name} — ${rangeLabelEn}*`,
       `Revenue: ${formatINR(s.totalRevenue)} · ${s.totalBills} bills`,
-      `Cash ${formatINR(s.byMethod.CASH.amount)} · UPI ${formatINR(s.byMethod.UPI.amount)} · Card ${formatINR(s.byMethod.CARD.amount)}`,
+      methodLine,
       `New customers: ${s.newCustomers} · Returning: ${s.returningBills}`,
     ]
     if (s.expenses.total > 0) {
@@ -1217,43 +1319,66 @@ export default function DashboardView() {
 
   return (
     <div className="p-4 pb-24 lg:p-6 lg:pb-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight lg:text-2xl">Dashboard</h1>
-          <p className="tnum mt-0.5 text-sm text-muted-foreground">
-            {rangeLabel} · {scopeShort}
-            {statsQ.data ? ` · ${statsQ.data.totalBills} bills` : ''}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RangePicker value={range} onChange={setRange} />
-          <Button
-            size="sm"
-            disabled={!statsQ.data}
-            onClick={shareReport}
-            className="h-10 gap-1.5"
-            title="Share the business summary as a PDF report"
-          >
-            <FileText className="size-4" aria-hidden />
-            Share Report
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!statsQ.data}
-            onClick={whatsappNote}
-            className="h-10 gap-1.5 text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
-            title="Send a short note to the owner on WhatsApp"
-          >
-            <MessageCircle className="size-4" aria-hidden />
-            WhatsApp
-          </Button>
+      {/* ── Hero header — greeting + scope + period, on a warm-lit band ── */}
+      <div className="hairline relative overflow-hidden rounded-2xl bg-card">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(480px_200px_at_88%_-25%,color-mix(in_oklch,var(--primary)_9%,transparent),transparent)]"
+        />
+        <div className="relative flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between lg:p-6">
+          <div className="min-w-0">
+            <p className="micro text-primary">{greeting()}{user ? `, ${user.name.split(' ')[0]}` : ''}</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h1 className="text-2xl font-bold tracking-tight lg:text-[1.7rem]">{L.admNavDashboard}</h1>
+              <span className="tnum rounded-full border bg-secondary px-2.5 py-1 text-xs font-semibold text-secondary-foreground">
+                {scopeShort}
+              </span>
+            </div>
+            <p className="tnum mt-1.5 text-sm text-muted-foreground">
+              {todayLabel()} · {rangeLabel}
+              {statsQ.data ? ` · ${L.admXBills.replace('{n}', String(statsQ.data.totalBills))}` : ''}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <RangePicker value={range} onChange={setRange} />
+            <Button
+              size="sm"
+              disabled={!statsQ.data}
+              onClick={shareReport}
+              className="h-10 gap-1.5"
+              title={L.admBtnShareTitle}
+            >
+              <FileText className="size-4" aria-hidden />
+              {L.admBtnShareReport}
+            </Button>
+            <UiTooltip>
+              <TooltipTrigger asChild>
+                {/* span wrapper keeps the tooltip alive on the disabled button */}
+                <span className="inline-flex">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!statsQ.data || whatsappScopeBlocked}
+                    onClick={whatsappNote}
+                    className="h-10 gap-1.5 text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
+                    aria-label={whatsappScopeBlocked ? L.admWaBlocked : L.admWaAria}
+                  >
+                    <MessageCircle className="size-4" aria-hidden />
+                    WhatsApp
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {whatsappScopeBlocked ? L.admWaBlocked : L.admWaAria}
+              </TooltipContent>
+            </UiTooltip>
+          </div>
         </div>
       </div>
 
       {/* Branch scope chips — franchise admins compare branches at a glance */}
       {scopeBranches.length > 1 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Branch scope">
+        <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label={L.admScopeAria}>
           <button
             type="button"
             onClick={() => setBranchScope(null)}
@@ -1265,7 +1390,7 @@ export default function DashboardView() {
                 : 'bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
             )}
           >
-            All branches
+            {L.admAllBranches}
           </button>
           {scopeBranches.map((b) => {
             const active = branchScope === b.id
@@ -1295,12 +1420,12 @@ export default function DashboardView() {
         <div className="hairline mt-6 rounded-xl bg-card">
           <EmptyState
             icon={DuoWarning}
-            title="Could not load the dashboard"
+            title={L.admErrTitle}
             hint={(statsQ.error as Error).message}
           />
           <div className="flex justify-center pb-6">
             <Button variant="outline" onClick={() => void statsQ.refetch()}>
-              Try again
+              {L.tryAgain}
             </Button>
           </div>
         </div>
@@ -1319,6 +1444,14 @@ export default function DashboardView() {
         </div>
       ) : (
         <div className="mt-4 space-y-4 lg:mt-6 lg:space-y-6">
+          {/* First-run setup checklist — auto-hides once every item is done
+              (or after the admin dismisses it). */}
+          <OnboardingCard
+            branch={branchQ.data?.branch ?? null}
+            branchReady={branchQ.isSuccess}
+            totalBills={statsQ.data.totalBills}
+          />
+
           {/* KPI cards */}
           <motion.div
             variants={KPI_CONTAINER_VARIANTS}
@@ -1328,8 +1461,8 @@ export default function DashboardView() {
           >
             <KpiCard
               index={0}
-              label="Revenue"
-              sub={`${statsQ.data.totalBills} bills · avg ${formatINR(statsQ.data.avgBill)}`}
+              label={L.admKpiRevenue}
+              sub={L.admKpiRevSub.replace('{n}', String(statsQ.data.totalBills)).replace('{avg}', formatINR(statsQ.data.avgBill))}
               value={statsQ.data.totalRevenue}
               format={formatINR}
               icon={DuoReceipt}
@@ -1338,8 +1471,10 @@ export default function DashboardView() {
             />
             <KpiCard
               index={1}
-              label="Bills"
-              sub={`${statsQ.data.returningBills} returning · ${statsQ.data.newCustomers} new customers`}
+              label={L.admKpiBills}
+              sub={L.admKpiBillsSub
+                .replace('{n}', String(statsQ.data.returningBills))
+                .replace('{m}', String(statsQ.data.newCustomers))}
               value={statsQ.data.totalBills}
               format={formatCount}
               icon={DuoTrendUp}
@@ -1348,8 +1483,8 @@ export default function DashboardView() {
             />
             <KpiCard
               index={2}
-              label="New customers"
-              sub="first-ever visits in range"
+              label={L.admKpiNewCustomers}
+              sub={L.admKpiNewSub}
               value={statsQ.data.newCustomers}
               format={formatCount}
               icon={DuoUsers}
@@ -1358,8 +1493,8 @@ export default function DashboardView() {
             />
             <KpiCard
               index={3}
-              label="Avg bill"
-              sub={`over ${statsQ.data.totalBills} bills`}
+              label={L.admKpiAvgBill}
+              sub={L.admKpiAvgSub.replace('{n}', String(statsQ.data.totalBills))}
               value={statsQ.data.avgBill}
               format={formatINR}
               icon={DuoSparkle}
@@ -1383,12 +1518,12 @@ export default function DashboardView() {
           />
 
           {/* Business-hours heatmap — staffing planner */}
-          <BusyHoursCard data={hoursQ.data} loading={hoursQ.isLoading} rangeLabel={rangeLabel} />
+          <BusyHoursCard data={hoursQ.data} loading={hoursQ.isLoading} rangeLabel={rangeLabel} title={L.admSecBusyHours} />
 
           {/* Branch insights league table — replaces the plain split when
               viewing the whole franchise (superset: P&L, growth, staffing). */}
           {!branchScope && compareQ.data && compareQ.data.branches.length > 0 ? (
-            <BranchInsightsCard data={compareQ.data} loading={compareQ.isLoading} rangeLabel={rangeLabel} />
+            <BranchInsightsCard data={compareQ.data} loading={compareQ.isLoading} rangeLabel={rangeLabel} title={L.admSecBranchCompare} />
           ) : (
             !branchScope &&
             statsQ.data.byBranch.length > 0 && <BranchSplitCard byBranch={statsQ.data.byBranch} />

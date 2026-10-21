@@ -10,6 +10,7 @@ import type {
   Tenant,
   Transaction,
   TransactionItem,
+  TransactionPayment,
   User,
 } from "@prisma/client"
 import type {
@@ -22,6 +23,8 @@ import type {
   FranchiseCategoryDTO,
   FranchiseServiceDTO,
   PaymentMethod,
+  PaymentMethodOrSplit,
+  PaymentSlice,
   Role,
   ServiceDTO,
   ServiceOverrideDTO,
@@ -241,9 +244,28 @@ export function toTransactionItemDTO(i: TransactionItem): TransactionItemDTO {
   return { id: i.id, serviceId: i.serviceId, serviceName: i.serviceName, price: i.price, qty: i.qty }
 }
 
-type TransactionWithItems = Transaction & { items: TransactionItem[] }
+type TransactionWithItems = Transaction & {
+  items: TransactionItem[]
+  /** Included by every caller since billing v1.1; the optional keeps older
+   *  call sites (if any slip through) compiling while the fallback below
+   *  synthesizes a single-payment view from the denormalized columns. */
+  payments?: TransactionPayment[]
+}
 
 export function toTransactionDTO(t: TransactionWithItems, tenantName = ""): TransactionDTO {
+  // Payment slices: from the rows when present; otherwise synthesize from the
+  // denormalized columns (legacy edge — a bill created before/without rows).
+  let payments: PaymentSlice[]
+  if (t.payments && t.payments.length > 0) {
+    payments = t.payments.map((p) => ({ method: p.method as PaymentMethod, amount: round2(p.amount) }))
+  } else {
+    payments = [
+      {
+        method: (t.paymentMethod === "SPLIT" ? "CASH" : t.paymentMethod) as PaymentMethod,
+        amount: round2(t.total - t.tipAmount),
+      },
+    ]
+  }
   return {
     id: t.id,
     billNo: t.billNo,
@@ -258,10 +280,13 @@ export function toTransactionDTO(t: TransactionWithItems, tenantName = ""): Tran
     subtotal: t.subtotal,
     discountPct: t.discountPct,
     discountAmount: t.discountAmount,
+    discountFlat: t.discountFlat,
     gstPct: t.gstPct,
     gstAmount: t.gstAmount,
+    tipAmount: t.tipAmount,
     total: t.total,
-    paymentMethod: t.paymentMethod as PaymentMethod,
+    paymentMethod: t.paymentMethod as PaymentMethodOrSplit,
+    payments,
     note: t.note,
     status: t.status,
     voidedAt: t.voidedAt ? t.voidedAt.toISOString() : null,

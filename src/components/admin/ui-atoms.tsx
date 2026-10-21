@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Banknote, CreditCard, QrCode } from 'lucide-react'
+import { Banknote, CreditCard, QrCode, Split } from 'lucide-react'
 import { DuoWarning } from '@/components/ui/duotone-icons'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +24,9 @@ export interface StaffListResponse {
 export interface CustomersResponse {
   customers: CustomerDTO[]
   total: number
+  /** Tenant-wide count of returning customers quiet for 60+ days —
+   *  independent of search/lapsed filters (drives the win-back chip). */
+  lapsedCount?: number
 }
 
 /* ── Small helpers ─────────────────────────────────────────────────────────── */
@@ -62,10 +65,15 @@ export function formatAxisINR(n: number): string {
   return String(Math.round(n))
 }
 
-/* ── Payment method visual language (Cash=emerald, UPI=rose, Card=amber) ───── */
+/* ── Payment method visual language (Cash=emerald, UPI=rose, Card=amber, ── */
+/*    Split=stone — a neutral tone for mixed-tender bills)                    */
+
+/** Widened so 'SPLIT' is renderable whether or not the shared PaymentMethod
+ *  union has gained the SPLIT member yet (billing v1.1 rollout). */
+export type MethodKey = PaymentMethod | 'SPLIT'
 
 export const METHOD_META: Record<
-  PaymentMethod,
+  MethodKey,
   { label: string; icon: IconType; badgeClass: string; chipClass: string; barClass: string; dotClass: string }
 > = {
   CASH: {
@@ -92,10 +100,18 @@ export const METHOD_META: Record<
     barClass: 'bg-amber-500',
     dotClass: 'bg-amber-500',
   },
+  SPLIT: {
+    label: 'Split',
+    icon: Split,
+    badgeClass: 'border-transparent bg-stone-200 text-stone-800 hover:bg-stone-200 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-900',
+    chipClass: 'bg-stone-500/10 text-stone-700 dark:text-stone-400',
+    barClass: 'bg-stone-500',
+    dotClass: 'bg-stone-500',
+  },
 }
 
-export function MethodBadge({ method, className }: { method: PaymentMethod; className?: string }) {
-  const meta = METHOD_META[method]
+export function MethodBadge({ method, className }: { method: MethodKey; className?: string }) {
+  const meta = METHOD_META[method] ?? METHOD_META.CARD
   const Icon = meta.icon
   return (
     <Badge className={cn(meta.badgeClass, className)}>

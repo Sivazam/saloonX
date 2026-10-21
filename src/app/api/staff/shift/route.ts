@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
 import { dayStart, dayEnd, round2 } from "@/lib/serialize"
-import type { ShiftReportResponse } from "@/lib/types"
+import type { PaymentMethod, ShiftReportResponse } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
 
@@ -39,6 +39,8 @@ export async function GET(request: Request) {
   })
   if (!staff) return NextResponse.json({ error: "Staff member not found" }, { status: 404 })
 
+  // A staff-day is naturally bounded — NO take limit (a silent 200-bill cap
+  // would make cash handover short by every bill past it on a festival day).
   const txns = await db.transaction.findMany({
     where: {
       staffId,
@@ -47,27 +49,58 @@ export async function GET(request: Request) {
       createdAt: { gte: start, lte: end },
     },
     orderBy: { createdAt: "asc" },
-    take: 200,
-    include: { items: { select: { qty: true } } },
+    select: {
+      id: true,
+      billNo: true,
+      createdAt: true,
+      branchName: true,
+      customerName: true,
+      customerMobile: true,
+      subtotal: true,
+      discountAmount: true,
+      tipAmount: true,
+      total: true,
+      paymentMethod: true,
+      items: { select: { qty: true } },
+    },
   })
+
+  // Payment slices of the day's bills — day-scoped, so the IN list is bounded.
+  // SPLIT bills contribute their CASH/UPI/CARD slices here individually, which
+  // is exactly what the cash-drawer and method mix need.
+  const paymentRows = txns.length
+    ? await db.transactionPayment.findMany({
+        where: { transactionId: { in: txns.map((t) => t.id) } },
+        select: { method: true, amount: true },
+      })
+    : []
 
   const byPayment: ShiftReportResponse["summary"]["byPayment"] = {
     CASH: { count: 0, amount: 0 },
     UPI: { count: 0, amount: 0 },
     CARD: { count: 0, amount: 0 },
   }
+  for (const p of paymentRows) {
+    const split = byPayment[p.method as PaymentMethod]
+    if (!split) continue
+    split.count += 1
+    split.amount = round2(split.amount + p.amount)
+  }
+
   let revenue = 0
   let discounts = 0
+  // Commission base: pre-GST, pre-tip revenue (Σ subtotal − discount) — tips
+  // belong to the staff, GST belongs to the government; neither is the salon's
+  // revenue to pay commission on.
+  let commissionBase = 0
   for (const t of txns) {
     revenue += t.total
     discounts += t.discountAmount
-    const split = byPayment[t.paymentMethod as keyof typeof byPayment] ?? byPayment.CASH
-    split.count += 1
-    split.amount += t.total
+    commissionBase += round2(t.subtotal - t.discountAmount)
   }
-  for (const split of Object.values(byPayment)) split.amount = round2(split.amount)
+  commissionBase = round2(commissionBase)
 
-  const commission = round2((revenue * staff.commissionPct) / 100)
+  const commission = round2((commissionBase * staff.commissionPct) / 100)
 
   const response: ShiftReportResponse = {
     date,
@@ -85,8 +118,12 @@ export async function GET(request: Request) {
       revenue: round2(revenue),
       discounts: round2(discounts),
       avgBill: txns.length > 0 ? round2(revenue / txns.length) : 0,
+      commissionBase,
       commission,
       byPayment,
+      // What the staff hands over: every CASH slice (split bills included).
+      // Tips are inside the bill totals already, so a cash tip paid out of the
+      // till is covered by its bill's cash slice.
       cashCollected: byPayment.CASH.amount,
       firstBillAt: txns.length > 0 ? txns[0].createdAt.toISOString() : null,
       lastBillAt: txns.length > 0 ? txns[txns.length - 1].createdAt.toISOString() : null,
@@ -100,6 +137,7 @@ export async function GET(request: Request) {
       customerMobile: t.customerMobile,
       items: t.items.reduce((s, i) => s + i.qty, 0),
       discountAmount: round2(t.discountAmount),
+      tipAmount: round2(t.tipAmount),
       total: round2(t.total),
       paymentMethod: t.paymentMethod as ShiftReportResponse["bills"][number]["paymentMethod"],
     })),

@@ -70,6 +70,10 @@ model Branch {
   serviceOverrides  ServiceOverride[]
   expenses          Expense[]
   menuLeads         MenuLead[]
+
+  // Bill numbers are per-branch PREFIX-0001 — two branches of ONE franchise
+  // sharing a prefix would collide globally on Transaction.billNo.
+  @@unique([tenantId, billPrefix])
 }
 
 model User {
@@ -206,11 +210,15 @@ model Transaction {
   staffName      String
   subtotal       Float
   discountPct    Float             @default(0)
-  discountAmount Float             @default(0)
+  discountAmount Float             @default(0) // computed store (flat or pct)
+  /** Flat-₹ discount (mutually exclusive with discountPct > 0). Null = percentage/none. */
+  discountFlat   Float?
   gstPct         Float             @default(0)
   gstAmount      Float             @default(0)
+  /** Staff-collected tip — added AFTER GST, never commissioned, never discounted. */
+  tipAmount      Float             @default(0)
   total          Float
-  paymentMethod  String // "CASH" | "UPI" | "CARD"
+  paymentMethod  String // "CASH" | "UPI" | "CARD" | "SPLIT" (SPLIT = >1 payment rows)
   note           String?
   status         String            @default("COMPLETED") // "COMPLETED" | "VOIDED"
   /** Idempotency key from the offline bill queue — a retried sync must never
@@ -224,6 +232,7 @@ model Transaction {
   voidReason     String?
   createdAt      DateTime          @default(now())
   items          TransactionItem[]
+  payments       TransactionPayment[]
 
   @@index([branchId, createdAt])
   @@index([tenantId, createdAt])
@@ -241,6 +250,26 @@ model TransactionItem {
   serviceName   String
   price         Float
   qty           Int
+}
+
+// One bill may be settled in several ways at once (e.g. ₹600 cash + ₹400 UPI).
+// Each row is a slice of the bill's total; the sum always equals the total
+// exactly (the API forces the last slice to absorb sub-paisa rounding).
+// branchId/tenantId/createdAt are denormalized from the bill so payment-level
+// aggregation (cash handover, method mix) never needs a join.
+model TransactionPayment {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  method        String // "CASH" | "UPI" | "CARD"
+  amount        Float
+  branchId      String
+  tenantId      String
+  createdAt     DateTime    @default(now())
+
+  @@unique([transactionId, method])
+  @@index([tenantId, createdAt])
+  @@index([branchId, createdAt])
 }
 
 model Expense {

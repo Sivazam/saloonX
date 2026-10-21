@@ -27,7 +27,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet, apiPut } from '@/lib/api-client'
-import { formatINR } from '@/lib/format'
 import type { BranchAdminDTO, MenuLeadsStatsResponse } from '@/lib/types'
 import { useAppStore } from '@/store/use-app-store'
 import { Badge } from '@/components/ui/badge'
@@ -52,12 +51,24 @@ async function qrDataUrl(url: string): Promise<string> {
 }
 
 /** A print-ready A5 counter poster: brand, QR, offer strip, address. */
+
+/** HTML-escape everything interpolated into the poster — branch data is
+ *  user-typed and this document runs on our own origin (no raw injection). */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function printPoster(branch: BranchAdminDTO, qr: string, url: string) {
   const locality = branch.name.includes('—') ? branch.name.split('—').pop()!.trim() : branch.name
   const offer = branch.menuOfferPct > 0
     ? `<div class="offer">Scan &amp; register on the menu — get ${branch.menuOfferPct}% OFF your first visit</div>`
     : `<div class="offer subtle">Scan to see our full service menu &amp; prices</div>`
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${branch.name} — Menu QR</title>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(branch.name)} — Menu QR</title>
 <style>
   @page { size: A5 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
@@ -68,20 +79,22 @@ function printPoster(branch: BranchAdminDTO, qr: string, url: string) {
   .divider { width: 42mm; border-top: 1pt solid #d6c9a8; margin: 4mm 0; }
   .qr { width: 92mm; height: 92mm; border: 3pt solid #1c1917; border-radius: 6mm; padding: 4mm; }
   .qr img { width: 100%; height: 100%; }
-  .offer { margin-top: 6mm; font-size: 13.5pt; font-weight: bold; background: #1c1917; color: #fbbf24; border-radius: 99px; padding: 4mm 8mm; max-width: 120mm; }
+  .url { margin-top: 3mm; font-size: 9pt; color: #78716c; font-family: -apple-system, 'Segoe UI', sans-serif; word-break: break-all; }
+  .offer { margin-top: 5mm; font-size: 13.5pt; font-weight: bold; background: #1c1917; color: #fbbf24; border-radius: 99px; padding: 4mm 8mm; max-width: 120mm; }
   .offer.subtle { background: transparent; color: #1c1917; border: 1.5pt solid #1c1917; }
   .steps { margin-top: 5mm; font-size: 10.5pt; color: #57534e; line-height: 1.7; font-family: -apple-system, 'Segoe UI', sans-serif; }
   .addr { margin-top: auto; font-size: 10pt; color: #57534e; font-family: -apple-system, 'Segoe UI', sans-serif; line-height: 1.5; }
   .foot { margin-top: 3mm; font-size: 8pt; letter-spacing: 0.25em; text-transform: uppercase; color: #a8a29e; }
 </style></head><body>
 <div class="poster">
-  <div class="brand">${branch.tenantName}</div>
-  <h1>${locality}</h1>
+  <div class="brand">${esc(branch.tenantName)}</div>
+  <h1>${esc(locality)}</h1>
   <div class="divider"></div>
   <div class="qr"><img src="${qr}" alt="Menu QR code"></div>
+  <div class="url">${esc(url)}</div>
   <div class="offer-wrap">${offer}</div>
   <div class="steps">1 · Point your camera at the code&nbsp;&nbsp;·&nbsp;&nbsp;2 · See our menu &amp; prices<br>3 · Register for your first-visit offer</div>
-  <div class="addr">${[branch.address, branch.city].filter(Boolean).join('<br>')}${branch.phone ? `<br>${branch.phone}` : ''}</div>
+  <div class="addr">${[branch.address, branch.city].filter((x): x is string => !!x).map(esc).join('<br>')}${branch.phone ? `<br>${esc(branch.phone)}` : ''}</div>
   <div class="foot">Powered by SaloonX</div>
 </div>
 <script>window.onload = () => { window.print() }</script>
@@ -404,8 +417,8 @@ export default function QrMenuView() {
 
       <p className="rounded-xl border bg-muted/40 p-3.5 text-xs leading-relaxed text-muted-foreground">
         <strong className="text-foreground">Tip:</strong> the QR never expires and always shows today&apos;s prices —
-        change your menu in <em>Menu &amp; Prices</em> and every scan reflects it instantly. Revenue impact of offers
-        shows up in your dashboard like any other discount ({formatINR(0)} vs manual coupons — no bookkeeping needed).
+        change your menu in <em>Menu &amp; Prices</em> and every scan reflects it instantly. Redeemed offers show up
+        in your dashboard like any other discount — no manual coupon bookkeeping needed.
       </p>
     </div>
   )

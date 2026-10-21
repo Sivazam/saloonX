@@ -5,22 +5,16 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight,
   Clock,
-  Flower2,
-  Gift,
+  CloudOff,
   IndianRupee,
-  Palette,
   Plus,
-  Scissors,
   ShoppingBag,
-  Sparkles,
-  Waves,
   X,
-  Zap,
-  type LucideIcon,
 } from 'lucide-react'
 import { useAppStore, newCustomItemId, useT, type CartItem } from '@/store/use-app-store'
 import { formatINR } from '@/lib/format'
 import type { CategoryDTO } from '@/lib/types'
+import { serviceArt, ServiceArt } from '@/components/service-art'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -45,26 +39,17 @@ interface ServiceSelectStepProps {
   categories: CategoryDTO[]
   loading: boolean
   error: string | null
+  /** Network fetch failed but a ≤7-day-old cached menu is on screen —
+   *  billing can continue offline from the saved copy. */
+  savedMenu?: boolean
   onRetry: () => void
   onContinue: () => void
 }
 
-/* ── Category icon tiles (visual anchors for non-readers) ─────────────────── */
-
-const CATEGORY_META: { match: RegExp; icon: LucideIcon; tile: string }[] = [
-  { match: /cut|styling|trim/i, icon: Scissors, tile: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
-  { match: /shav|beard|razor/i, icon: Zap, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
-  { match: /facial|clean|skin/i, icon: Sparkles, tile: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  { match: /colou?r|dye/i, icon: Palette, tile: 'bg-teal-500/10 text-teal-600 dark:text-teal-400' },
-  { match: /massage|spa|wash|head/i, icon: Flower2, tile: 'bg-orange-500/10 text-orange-600 dark:text-orange-400' },
-  { match: /pack|combo|offer/i, icon: Gift, tile: 'bg-rose-500/10 text-rose-700 dark:text-rose-300' },
-]
-
-const DEFAULT_META = { icon: Waves, tile: 'bg-primary/10 text-primary' }
-
-function catMeta(name: string) {
-  return CATEGORY_META.find((c) => c.match.test(name)) ?? DEFAULT_META
-}
+/* Each service card carries its own hand-drawn illustration (see
+ * service-art.tsx) — resolved from the service name, so "Beard Trim",
+ * "Fruit Facial" and "Head Massage" each get distinct artwork instead of
+ * one generic icon per category. */
 
 function QtyStepper({
   serviceId,
@@ -93,9 +78,9 @@ function QtyStepper({
         className="flex size-11 items-center justify-center rounded-xl text-primary-foreground/90 hover:bg-white/15"
         onClick={() => onDecrement(serviceId)}
       >
-        <span aria-hidden className="text-2xl leading-none font-light">−</span>
+        <span aria-hidden className="text-xl leading-none font-light">−</span>
       </motion.button>
-      <span className="min-w-8 text-center text-lg font-bold tabular-nums">{qty}</span>
+      <span className="min-w-8 text-center text-base font-bold tabular-nums">{qty}</span>
       <motion.button
         type="button"
         whileTap={{ scale: 0.85 }}
@@ -113,6 +98,7 @@ export function ServiceSelectStep({
   categories,
   loading,
   error,
+  savedMenu = false,
   onRetry,
   onContinue,
 }: ServiceSelectStepProps) {
@@ -121,6 +107,9 @@ export function ServiceSelectStep({
   const setCartQty = useAppStore((s) => s.setCartQty)
   const lang = useAppStore((s) => s.lang)
   const L = useT()
+  // ADMINs get the mobile bottom nav (fixed, z-40) — lift the sticky cart
+  // bar above it on phones so the Continue CTA is never covered mid-scroll.
+  const hasMobileNav = useAppStore((s) => s.user?.role === 'ADMIN')
 
   const [activeCategory, setActiveCategory] = useState<string>('all')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -171,6 +160,17 @@ export function ServiceSelectStep({
 
   return (
     <div>
+      {/* Offline notice — fetch failed but a saved menu copy is usable */}
+      {savedMenu && !loading && (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300"
+          role="status"
+        >
+          <CloudOff className="size-4 shrink-0" aria-hidden />
+          {L.savedMenuNotice}
+        </div>
+      )}
+
       {/* Category chips — sticky under the app header */}
       {cats.length > 0 && (
         <div className="sticky top-16 z-20 -mx-4 bg-background/95 px-4 py-3 backdrop-blur lg:-mx-6 lg:px-6">
@@ -183,12 +183,13 @@ export function ServiceSelectStep({
                     key={c.id}
                     type="button"
                     onClick={() => setActiveCategory(c.id)}
-                    className={`h-11 shrink-0 rounded-full border px-5 text-sm font-semibold transition-colors ${
+                    className={`flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-4 text-[13px] font-semibold transition-colors ${
                       active
                         ? 'border-primary bg-primary text-primary-foreground'
                         : 'bg-card text-foreground hover:bg-accent'
                     }`}
                   >
+                    <ServiceArt name={c.name} className="size-4.5 shrink-0 opacity-90" />
                     {c.name}
                   </button>
                 )
@@ -203,9 +204,9 @@ export function ServiceSelectStep({
       {/* Body */}
       <div className="mt-2">
         {loading ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="min-h-28 rounded-2xl" />
+              <Skeleton key={i} className="min-h-[6.5rem] rounded-2xl" />
             ))}
           </div>
         ) : error ? (
@@ -219,17 +220,17 @@ export function ServiceSelectStep({
         ) : cats.length === 0 ? (
           <div className="rounded-2xl border bg-card p-10 text-center">
             <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary/10">
-              <Scissors className="size-7 text-primary" />
+              <ServiceArt name="haircut" className="size-9 text-primary" />
             </div>
             <p className="mt-4 text-lg font-semibold">{L.noServices}</p>
             <p className="mt-1 text-sm text-muted-foreground">{L.noServicesHint}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-4">
             {visible.flatMap((cat, ci) => {
-              const meta = catMeta(cat.name)
               return cat.services.map((service, si) => {
                 const qty = qtyOf(service.id)
+                const art = serviceArt(service.name)
                 return (
                   <motion.div
                     key={service.id}
@@ -247,36 +248,34 @@ export function ServiceSelectStep({
                       }
                     }}
                     aria-label={`${service.name}, ${formatINR(service.price)}`}
-                    className={`relative flex min-h-28 cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border bg-card p-4 text-left transition-shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+                    className={`relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border bg-card p-3 text-left transition-shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                       qty > 0 ? 'shadow-sm ring-2 ring-primary' : 'hover:border-primary/50'
                     }`}
                   >
                     <div className="flex items-start gap-2.5">
                       <span
-                        className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${meta.tile}`}
+                        className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${art.tile}`}
                         aria-hidden
                       >
-                        <meta.icon className="size-5" />
+                        <art.Art className="size-8" />
                       </span>
-                      <p className="line-clamp-2 self-center text-sm font-semibold sm:text-base">
-                        {service.name}
-                      </p>
-                    </div>
-                    <div className="flex items-end justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-lg font-bold text-primary">
-                          {formatINR(service.price)}
-                        </p>
+                      <div className="min-w-0 self-center">
+                        <p className="line-clamp-2 text-[13px] leading-snug font-semibold">{service.name}</p>
                         {service.durationMin ? (
-                          <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="size-3.5" />
+                          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <Clock className="size-3" />
                             {service.durationMin} min
                           </p>
                         ) : null}
                       </div>
+                    </div>
+                    <div className="mt-2 flex items-end justify-between gap-2">
+                      <p className="text-[15px] leading-tight font-bold text-primary tabular-nums">
+                        {formatINR(service.price)}
+                      </p>
                       {qty === 0 && (
-                        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                          <Plus className="size-5" />
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <Plus className="size-4" />
                         </span>
                       )}
                     </div>
@@ -302,20 +301,20 @@ export function ServiceSelectStep({
               transition={{ delay: 0.08, duration: 0.2 }}
               whileTap={{ scale: 0.96 }}
               onClick={() => setCustomOpen(true)}
-              className="flex min-h-28 flex-col justify-between rounded-2xl border-2 border-dashed border-amber-500/60 bg-amber-500/5 p-4 text-left transition-colors hover:bg-amber-500/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
+              className="flex cursor-pointer flex-col justify-between rounded-2xl border-2 border-dashed border-amber-500/60 bg-amber-500/5 p-3 text-left transition-colors hover:bg-amber-500/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
             >
               <div className="flex items-start gap-2.5">
                 <span
-                  className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400"
                   aria-hidden
                 >
-                  <IndianRupee className="size-5" />
+                  <IndianRupee className="size-6" />
                 </span>
-                <p className="line-clamp-2 self-center text-sm font-semibold text-amber-800 sm:text-base dark:text-amber-300">
+                <p className="line-clamp-2 self-center text-[13px] leading-snug font-semibold text-amber-800 dark:text-amber-300">
                   {L.customAmount}
                 </p>
               </div>
-              <p className="text-xs font-medium text-amber-700/80 dark:text-amber-400/80">
+              <p className="text-[11px] font-medium text-amber-700/80 dark:text-amber-400/80">
                 {L.customAmountDesc}
               </p>
             </motion.button>
@@ -331,7 +330,9 @@ export function ServiceSelectStep({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 64, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-            className="sticky bottom-4 z-20 mt-6"
+            className={hasMobileNav
+              ? 'sticky bottom-[calc(4.75rem_+_env(safe-area-inset-bottom))] z-20 mt-6 lg:bottom-4'
+              : 'sticky bottom-4 z-20 mt-6'}
           >
             <div className="mx-auto flex max-w-xl items-center gap-3 rounded-2xl border bg-card p-3 pl-5 shadow-lg">
               <div className="min-w-0 flex-1">

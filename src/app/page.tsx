@@ -60,7 +60,20 @@ export default function Page() {
     let cancelled = false
     apiGet<MeResponse>("/api/auth/me")
       .then((res) => {
-        if (!cancelled) setSession(res)
+        if (cancelled) return
+        setSession(res)
+        // PWA app shortcuts (manifest.webmanifest) deep-link into a view:
+        //   /?action=billing → New Bill, /?view=dashboard → Dashboard.
+        // Role-guarded — staff always land on billing; unknown params ignored.
+        try {
+          const params = new URLSearchParams(window.location.search)
+          const wanted = params.get("view") ?? (params.get("action") === "billing" ? "billing" : null)
+          if (wanted === "dashboard" && res.user.role === "ADMIN") {
+            useAppStore.getState().setView("dashboard")
+          }
+        } catch {
+          /* URL parsing can't realistically fail here */
+        }
       })
       .catch(() => {
         // Not signed in — stay on login.

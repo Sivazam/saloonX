@@ -28,6 +28,7 @@ import { firebaseAuth } from '@/lib/firebase'
 import type { BranchRef, MeResponse } from '@/lib/types'
 import { useAppStore, useT } from '@/store/use-app-store'
 import { LangToggle } from '@/components/shell/lang-toggle'
+import { ServiceArt } from '@/components/service-art'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -90,11 +91,13 @@ function friendly(raw: string): string {
   return 'Could not sign in — please try again'
 }
 
-/** Collapsed-by-default demo credentials card. Gated behind NEXT_PUBLIC_SHOW_DEMO_HINTS:
- *  set to "false" on a production deployment to hide it entirely. */
+/** Collapsed-by-default demo credentials card. OPT-IN via NEXT_PUBLIC_SHOW_DEMO_HINTS:
+ *  a production deployment must deliberately set it to "true" (e.g. a demo
+ *  environment) — the default is hidden, so working credentials are never
+ *  advertised on a real salon's login screen. */
 function DemoAccountsCard() {
   const [open, setOpen] = useState(false)
-  if (process.env.NEXT_PUBLIC_SHOW_DEMO_HINTS === 'false') return null
+  if (process.env.NEXT_PUBLIC_SHOW_DEMO_HINTS !== 'true') return null
   return (
     <div className="mt-8 rounded-xl border bg-muted/50">
       <button
@@ -123,6 +126,11 @@ function DemoAccountsCard() {
 
 /* ── Split-screen layout ──────────────────────────────────────────────── */
 
+/* The five signature services woven through the brand panel — one illustrated
+ * chip each (hair, skin, beard, ritual, colour) so the panel reads "salon"
+ * at a glance, even before reading a word. */
+const PANEL_SERVICES = ['Haircut', 'Fruit Facial', 'Royal Shave', 'Head Massage', 'Hair Colour']
+
 function BrandPanel() {
   return (
     <div className="relative hidden overflow-hidden bg-primary lg:flex lg:w-[46%] lg:shrink-0">
@@ -139,6 +147,11 @@ function BrandPanel() {
         aria-hidden
         className="pointer-events-none absolute top-1/2 left-1/2 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary-foreground/10"
       />
+      {/* warm amber glow — the salon lamp behind the panel */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(560px_320px_at_85%_10%,oklch(0.83_0.13_80/0.16),transparent_65%)]"
+      />
 
       <div className="relative z-10 flex w-full flex-col justify-between p-10 xl:p-14">
         <div className="flex items-center gap-3">
@@ -150,7 +163,7 @@ function BrandPanel() {
         </div>
 
         <div className="max-w-md">
-          <h2 className="text-4xl font-bold leading-tight tracking-tight text-primary-foreground xl:text-[2.75rem]">
+          <h2 className="font-display text-4xl font-semibold leading-[1.15] tracking-tight text-primary-foreground xl:text-[2.9rem]">
             Bill in seconds.
             <br />
             Run your whole chain.
@@ -180,6 +193,24 @@ function BrandPanel() {
               </motion.li>
             ))}
           </ul>
+
+          {/* Signature service strip — illustrated chips in frosted tiles */}
+          <div className="mt-9 flex items-center gap-2.5">
+            {PANEL_SERVICES.map((name, i) => (
+              <motion.span
+                key={name}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.45 + i * 0.07, duration: 0.3 }}
+                title={name}
+                className="flex size-11 items-center justify-center rounded-xl border border-primary-foreground/12 bg-primary-foreground/8"
+              >
+                <ServiceArt name={name} className="size-5.5 text-primary-foreground/75" />
+              </motion.span>
+            ))}
+            <span className="ml-1 h-px flex-1 bg-primary-foreground/15" aria-hidden />
+            <span className="micro shrink-0 text-primary-foreground/50">and 25 more</span>
+          </div>
         </div>
 
         <p className="text-xs text-primary-foreground/40">SaloonX · encrypted secure sign-in</p>
@@ -534,7 +565,7 @@ export function LoginView() {
             className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
           >
             <ArrowDownToLine className="size-3.5" aria-hidden />
-            Download source (zipper.zip · 18 MB)
+            Download full source (zipper.zip · 15 MB)
           </a>
         </div>
       </div>

@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { DuoSparkle, DuoWarning } from '@/components/ui/duotone-icons'
+import { serviceArt, ServiceArt } from '@/components/service-art'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api-client'
@@ -371,7 +372,13 @@ export default function ServicesView() {
                       const isOpen = expanded.has(s.id)
                       return (
                         <div key={s.id}>
-                          <div className="flex items-center gap-2 px-3 py-2.5 sm:px-4">
+                          <div className="flex items-center gap-2.5 px-3 py-2.5 sm:px-4">
+                            <span
+                              className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${serviceArt(s.name).tile}`}
+                              aria-hidden
+                            >
+                              <ServiceArt name={s.name} className="size-6" />
+                            </span>
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <p className="truncate text-sm font-medium">{s.name}</p>

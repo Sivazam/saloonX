@@ -5,6 +5,16 @@ export type Role = "SUPER_ADMIN" | "ADMIN" | "STAFF"
 
 export type PaymentMethod = "CASH" | "UPI" | "CARD"
 
+/** A bill settled in more than one way — the granular split lives in
+ *  TransactionDTO.payments (one row per method). */
+export type PaymentMethodOrSplit = PaymentMethod | "SPLIT"
+
+/** One slice of a split payment (or the single payment of a normal bill). */
+export interface PaymentSlice {
+  method: PaymentMethod
+  amount: number
+}
+
 export interface AppUser {
   id: string
   name: string
@@ -187,7 +197,7 @@ export interface LastVisitDTO {
   date: string
   services: string[] // e.g. ["Haircut (Men)", "Beard Trim & Shape x2"]
   total: number
-  paymentMethod: PaymentMethod
+  paymentMethod: PaymentMethodOrSplit
   branchName: string | null
 }
 
@@ -286,10 +296,16 @@ export interface TransactionDTO {
   subtotal: number
   discountPct: number
   discountAmount: number
+  /** Flat-₹ discount actually applied (null = percentage or none). */
+  discountFlat: number | null
   gstPct: number
   gstAmount: number
+  /** Staff-collected tip — included in total, added after GST. */
+  tipAmount: number
   total: number
-  paymentMethod: PaymentMethod
+  paymentMethod: PaymentMethodOrSplit
+  /** Granular payment slices — always ≥ 1; > 1 only on SPLIT bills. */
+  payments: PaymentSlice[]
   note: string | null
   status: string // "COMPLETED" | "VOIDED"
   voidedAt: string | null
@@ -318,7 +334,7 @@ export interface TransactionsResponse {
     revenue: number
     count: number
     avgBill: number
-    byMethod: Record<PaymentMethod, MethodSummary>
+    byMethod: Record<PaymentMethodOrSplit, MethodSummary>
     byBranch: BranchSummaryStat[]
   }
 }
@@ -381,6 +397,12 @@ export interface CustomerHistoryResponse {
     spend: number
     avgBill: number
   }
+}
+
+/** POST /api/customers/merge — `from` absorbed into `to`; the keeper comes
+ *  back with summed visits/spend and the combined visit history. */
+export interface MergeCustomerResponse {
+  customer: CustomerDTO
 }
 
 export type ExpenseCategory =
@@ -450,8 +472,9 @@ export interface ShiftBillDTO {
   customerMobile: string | null
   items: number
   discountAmount: number
+  tipAmount: number
   total: number
-  paymentMethod: PaymentMethod
+  paymentMethod: PaymentMethodOrSplit
 }
 
 export interface ShiftPaymentSplit {
@@ -494,12 +517,14 @@ export interface ShiftReportResponse {
   }
   summary: {
     bills: number
-    revenue: number // sum of bill totals (after discount, incl. GST)
+    revenue: number // sum of bill totals (after discount, incl. GST + tips)
     discounts: number
     avgBill: number
-    commission: number // revenue × commissionPct
+    /** Pre-GST, pre-tip revenue the commission is computed on (Σ subtotal − discount). */
+    commissionBase: number
+    commission: number // commissionBase × commissionPct
     byPayment: Record<PaymentMethod, ShiftPaymentSplit>
-    cashCollected: number // what the staff hands over at end of shift
+    cashCollected: number // Σ CASH payment slices — what the staff hands over
     firstBillAt: string | null
     lastBillAt: string | null
   }

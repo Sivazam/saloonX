@@ -33,6 +33,7 @@ import { apiGet, apiPost } from '@/lib/api-client'
 import { formatINR } from '@/lib/format'
 import type { MenuLeadResponse, PublicMenuResponse } from '@/lib/types'
 import { MenuIcon } from '@/components/menu/icons'
+import { serviceArt, ServiceArt } from '@/components/service-art'
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
 
 /* ── Claim persistence (per-salon, this device) ─────────────────────────── */
@@ -267,26 +268,31 @@ function CategoryTiles({
       <h2 className="font-display text-xl font-semibold text-stone-900">Explore the menu</h2>
       <p className="mt-0.5 text-[13px] text-stone-600">Tap a tile to jump to that section</p>
       <div className="mt-4 grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:grid-cols-6">
-        {data.categories.map((cat, i) => (
-          <motion.button
-            key={cat.id}
-            type="button"
-            initial={{ opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-40px' }}
-            transition={{ delay: i * 0.04, duration: 0.32 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => onJump(cat.id)}
-            className="group flex flex-col items-center gap-2 rounded-2xl border border-stone-200/90 bg-white p-3 shadow-sm transition hover:border-amber-300 hover:shadow-md"
-          >
-            <span className="flex size-11 items-center justify-center rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-100 transition group-hover:bg-amber-100">
-              <MenuIcon icon={cat.icon} className="size-5.5" />
-            </span>
-            <span className="line-clamp-2 text-center text-[11px] font-semibold leading-tight text-stone-700">
-              {cat.name}
-            </span>
-          </motion.button>
-        ))}
+        {data.categories.map((cat, i) => {
+          const art = serviceArt(cat.name)
+          return (
+            <motion.button
+              key={cat.id}
+              type="button"
+              initial={{ opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-40px' }}
+              transition={{ delay: i * 0.04, duration: 0.32 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => onJump(cat.id)}
+              className="group flex flex-col items-center gap-2 rounded-2xl border border-stone-200/90 bg-white p-3 shadow-sm transition hover:border-amber-300 hover:shadow-md"
+            >
+              <span
+                className={`flex size-12 items-center justify-center rounded-2xl ${art.warmTile} transition group-hover:scale-105`}
+              >
+                <art.Art className="size-8" />
+              </span>
+              <span className="line-clamp-2 text-center text-[11px] font-semibold leading-tight text-stone-700">
+                {cat.name}
+              </span>
+            </motion.button>
+          )
+        })}
       </div>
     </section>
   )
@@ -306,22 +312,25 @@ function PopularStrip({ data, onJump }: { data: PublicMenuResponse; onJump: (id:
       </h2>
       <p className="mt-0.5 text-[13px] text-stone-600">What regulars actually book</p>
       <div className="no-scrollbar -mx-5 mt-4 flex snap-x gap-2.5 overflow-x-auto px-5 pb-1">
-        {popular.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => onJump(s.categoryId)}
-            className="flex shrink-0 snap-start items-center gap-2.5 rounded-full border border-orange-200/80 bg-white py-2 pl-2.5 pr-4 shadow-sm transition hover:border-orange-300"
-          >
-            <span className="flex size-8 items-center justify-center rounded-full bg-orange-50">
-              <Flame className="size-4 text-orange-500" />
-            </span>
-            <span className="text-left">
-              <span className="block max-w-36 truncate text-[13px] font-semibold text-stone-800">{s.name}</span>
-              <span className="block text-[11px] font-medium text-stone-500">{formatINR(s.price)}</span>
-            </span>
-          </button>
-        ))}
+        {popular.map((s) => {
+          const art = serviceArt(s.name)
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onJump(s.categoryId)}
+              className="flex shrink-0 snap-start items-center gap-2.5 rounded-full border border-orange-200/80 bg-white py-2 pl-2.5 pr-4 shadow-sm transition hover:border-orange-300"
+            >
+              <span className={`flex size-9 items-center justify-center rounded-full ${art.warmTile}`}>
+                <art.Art className="size-6" />
+              </span>
+              <span className="text-left">
+                <span className="block max-w-36 truncate text-[13px] font-semibold text-stone-800">{s.name}</span>
+                <span className="block text-[11px] font-medium text-stone-500">{formatINR(s.price)}</span>
+              </span>
+            </button>
+          )
+        })}
       </div>
     </section>
   )
@@ -330,17 +339,24 @@ function PopularStrip({ data, onJump }: { data: PublicMenuResponse; onJump: (id:
 /* ── Menu sections ───────────────────────────────────────────────────────── */
 
 function ServiceRow({ service }: { service: PublicMenuResponse['categories'][number]['services'][number] }) {
+  const art = serviceArt(service.name)
   return (
     <motion.li
       initial={{ opacity: 0, y: 10 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-30px' }}
       transition={{ duration: 0.28 }}
-      className="flex items-center gap-3 rounded-2xl border border-stone-200/90 bg-white p-4 shadow-sm"
+      className="flex items-center gap-3 rounded-2xl border border-stone-200/90 bg-white p-3 shadow-sm transition-shadow hover:shadow-md"
     >
+      <span
+        className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${art.warmTile}`}
+        aria-hidden
+      >
+        <art.Art className="size-8" />
+      </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <h4 className="text-[15px] font-semibold leading-snug text-stone-900">{service.name}</h4>
+          <h4 className="text-sm leading-snug font-semibold text-stone-900">{service.name}</h4>
           {service.popular && (
             <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-600 ring-1 ring-orange-200/70">
               <Flame className="size-3" /> Popular
@@ -348,15 +364,15 @@ function ServiceRow({ service }: { service: PublicMenuResponse['categories'][num
           )}
         </div>
         {service.durationMin != null && (
-          <p className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-stone-500">
-            <Clock className="size-3.5" /> {service.durationMin} min
+          <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-stone-500">
+            <Clock className="size-3" /> {service.durationMin} min
           </p>
         )}
       </div>
       <div className="shrink-0 text-right">
-        <p className="tnum text-lg font-bold text-stone-900">{formatINR(service.price)}</p>
+        <p className="tnum text-base leading-tight font-bold text-stone-900">{formatINR(service.price)}</p>
         {service.mrp != null && service.mrp > service.price && (
-          <p className="tnum text-xs font-medium text-stone-400 line-through">{formatINR(service.mrp)}</p>
+          <p className="tnum text-[11px] font-medium text-stone-400 line-through">{formatINR(service.mrp)}</p>
         )}
       </div>
     </motion.li>
@@ -366,27 +382,32 @@ function ServiceRow({ service }: { service: PublicMenuResponse['categories'][num
 function MenuSections({ data }: { data: PublicMenuResponse }) {
   return (
     <div className="mx-auto max-w-3xl px-5 pb-6">
-      {data.categories.map((cat) => (
-        <section key={cat.id} id={`cat-${cat.id}`} aria-label={cat.name} className="scroll-mt-24 pt-9">
-          <div className="flex items-center gap-3">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-stone-900 text-amber-300 shadow-sm">
-              <MenuIcon icon={cat.icon} className="size-5.5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="font-display text-2xl font-semibold leading-tight text-stone-900">{cat.name}</h3>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-stone-400">
-                {cat.services.length} service{cat.services.length === 1 ? '' : 's'}
-              </p>
+      {data.categories.map((cat) => {
+        const art = serviceArt(cat.name)
+        return (
+          <section key={cat.id} id={`cat-${cat.id}`} aria-label={cat.name} className="scroll-mt-24 pt-7">
+            <div className="flex items-center gap-3">
+              <span
+                className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${art.warmTile} shadow-sm ring-1 ring-stone-200/60`}
+              >
+                <art.Art className="size-7" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-display text-xl leading-tight font-semibold text-stone-900">{cat.name}</h3>
+                <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-stone-400">
+                  {cat.services.length} service{cat.services.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-stone-200 to-transparent" />
             </div>
-            <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-stone-200 to-transparent" />
-          </div>
-          <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
-            {cat.services.map((s) => (
-              <ServiceRow key={s.id} service={s} />
-            ))}
-          </ul>
-        </section>
-      ))}
+            <ul className="mt-3.5 grid gap-2.5 sm:grid-cols-2">
+              {cat.services.map((s) => (
+                <ServiceRow key={s.id} service={s} />
+              ))}
+            </ul>
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -533,7 +554,7 @@ function CategoryDock({
                   active ? 'bg-amber-400 text-stone-900' : 'text-stone-400 hover:text-stone-200'
                 }`}
               >
-                <MenuIcon icon={cat.icon} className="size-5" />
+                <ServiceArt name={cat.name} className="size-5" />
                 <span className="max-w-14 truncate text-[9px] font-semibold leading-none">
                   {cat.name.split(/[&—]/)[0].trim()}
                 </span>

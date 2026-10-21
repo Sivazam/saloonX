@@ -40,6 +40,11 @@
     "node_modules",
     "examples",
     "mini-services",
-    "tests"
+    "tests",
+    "skills",
+    "upload",
+    "tool-results",
+    "download",
+    "seed-assets"
   ]
 }

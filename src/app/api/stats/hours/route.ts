@@ -5,6 +5,18 @@ import { dayEnd, dayStart, round2 } from "@/lib/serialize"
 
 export const dynamic = "force-dynamic"
 
+/** Clamp the requested range: no future dates, no decade-wide full-ledger
+ *  scans — `from` is pulled up to now − 366d, `to` is pushed back to now + 1d. */
+const RANGE_FLOOR_MS = 366 * 86_400_000
+const clampRange = (from: Date, to: Date): { from: Date; to: Date } => {
+  const minFrom = new Date(Date.now() - RANGE_FLOOR_MS)
+  const maxTo = new Date(Date.now() + 86_400_000)
+  return {
+    from: from < minFrom ? new Date(minFrom) : from,
+    to: to > maxTo ? new Date(maxTo) : to,
+  }
+}
+
 /**
  * GET /api/stats/hours?from&to&branchId — business-hours heat analysis.
  * Buckets COMPLETED bills by weekday (Mon=0…Sun=6) × hour-of-day so the
@@ -26,8 +38,10 @@ export async function GET(request: Request) {
 
   const defaultFrom = new Date()
   defaultFrom.setDate(defaultFrom.getDate() - 29)
-  const from = dayStart(params.get("from") ?? defaultFrom) ?? defaultFrom
-  const to = dayEnd(params.get("to") ?? new Date()) ?? new Date()
+  const { from, to } = clampRange(
+    dayStart(params.get("from") ?? defaultFrom) ?? defaultFrom,
+    dayEnd(params.get("to") ?? new Date()) ?? new Date(),
+  )
 
   const rows = await db.transaction.findMany({
     where: {

@@ -10,16 +10,27 @@
 // clientRequestId so a half-delivered sync can never double-bill.
 // ─────────────────────────────────────────────────────────────────────────
 
-import type { BranchProfileDTO, PaymentMethod, TransactionDTO } from '@/lib/types'
+import type {
+  BranchProfileDTO,
+  PaymentMethod,
+  PaymentMethodOrSplit,
+  PaymentSlice,
+  TransactionDTO,
+} from '@/lib/types'
 
 export interface QueuedBill {
   /** UUID — doubles as the idempotency key sent to the API. */
   clientRequestId: string
-  /** Payload exactly as POST /api/transactions expects. */
+  /** Payload exactly as POST /api/transactions expects. NEVER includes
+   *  expectedTotal — an unattended sync must not be 409'd by the drift check. */
   payload: {
     items: { serviceId?: string; name?: string; price?: number; qty: number }[]
     discountPct: number
-    paymentMethod: PaymentMethod
+    discountFlat?: number
+    tipAmount?: number
+    paymentMethod?: PaymentMethod
+    payments?: PaymentSlice[]
+    discountSource?: 'NONE' | 'LOYALTY' | 'MENU' | 'MANUAL'
     note?: string
     customerMobile?: string
     customerName?: string
@@ -33,6 +44,9 @@ export interface QueuedBill {
     itemSummary: string
     branchName: string
     createdAt: string
+    tipAmount?: number
+    discountFlat?: number
+    payments?: PaymentSlice[]
   }
   /** Sync bookkeeping. */
   attempts: number
@@ -89,8 +103,27 @@ export function newRequestId(): string {
   return `q-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+/** Hard cap on the offline queue. Beyond this the OLDEST entry is evicted —
+ *  a queue that grows without bound would eventually make every sync attempt
+ *  (and every IDB write) too slow to complete on a flaky connection. */
+export const MAX_QUEUE = 200
+
 export async function enqueueBill(bill: Omit<QueuedBill, 'attempts' | 'lastError' | 'queuedAt'>): Promise<void> {
   const record: QueuedBill = { ...bill, attempts: 0, lastError: null, queuedAt: new Date().toISOString() }
+  // Evict-before-insert: when the queue is full, drop the OLDEST entry (it
+  // has had the most sync chances) rather than rejecting the new bill — a
+  // fresh payment is always worth more than the oldest stale one. Only an
+  // actual IndexedDB failure rejects.
+  const all = await txStore<QueuedBill[]>('readonly', (s) => s.getAll())
+  if (all.length >= MAX_QUEUE) {
+    const oldest = [...all].sort((a, b) => (a.queuedAt < b.queuedAt ? -1 : 1))[0]
+    if (oldest) {
+      await txStore('readwrite', (s) => s.delete(oldest.clientRequestId))
+      console.warn(
+        `[offline-queue] full (${MAX_QUEUE}) — evicted oldest bill ${oldest.clientRequestId} (${oldest.display.itemSummary})`,
+      )
+    }
+  }
   await txStore('readwrite', (s) => s.put(record))
   emit('queue-changed')
 }
@@ -113,7 +146,9 @@ export async function removeQueuedBill(clientRequestId: string): Promise<void> {
 
 /** Rebuild the local preview bill (same shape the success screen showed)
  *  from a queued record + the session branch profile — powers the offline
- *  receipt PDF download/print from the sync popover. */
+ *  receipt PDF download/print from the sync popover. The total is recomputed
+ *  from the parts with the same formula the server uses, so the preview can
+ *  never mix recomputed lines with a frozen stale total. */
 export function queuedBillToPreview(
   bill: QueuedBill,
   branch: BranchProfileDTO,
@@ -128,9 +163,24 @@ export function queuedBillToPreview(
     qty: it.qty,
   }))
   const subtotal = round2(items.reduce((s, it) => s + it.price * it.qty, 0))
-  const discountAmount = round2((subtotal * bill.payload.discountPct) / 100)
+  const discountFlat = bill.payload.discountFlat ?? 0
+  const discountAmount =
+    discountFlat > 0
+      ? round2(Math.min(discountFlat, subtotal))
+      : round2((subtotal * bill.payload.discountPct) / 100)
   const gstPct = branch.gstEnabled ? branch.gstPct : 0
   const gstAmount = round2(((subtotal - discountAmount) * gstPct) / 100)
+  const tipAmount = round2(bill.payload.tipAmount ?? 0)
+  const total = round2(subtotal - discountAmount + gstAmount + tipAmount)
+
+  const inputPayments = bill.payload.payments ?? []
+  const payments: PaymentSlice[] =
+    inputPayments.length > 0
+      ? inputPayments.map((p) => ({ method: p.method, amount: round2(p.amount) }))
+      : [{ method: bill.payload.paymentMethod ?? 'CASH', amount: round2(total) }]
+  const paymentMethod: PaymentMethodOrSplit =
+    inputPayments.length > 1 ? 'SPLIT' : inputPayments[0]?.method ?? bill.payload.paymentMethod ?? 'CASH'
+
   return {
     id: bill.clientRequestId,
     billNo: `OFFLINE-${bill.clientRequestId.slice(0, 4).toUpperCase()}`,
@@ -145,10 +195,13 @@ export function queuedBillToPreview(
     subtotal,
     discountPct: bill.payload.discountPct,
     discountAmount,
+    discountFlat: discountFlat > 0 ? discountFlat : null,
     gstPct,
     gstAmount,
-    total: bill.display.total,
-    paymentMethod: bill.payload.paymentMethod,
+    tipAmount,
+    total,
+    paymentMethod,
+    payments,
     note: bill.payload.note ?? null,
     status: 'PENDING_SYNC',
     voidedAt: null,

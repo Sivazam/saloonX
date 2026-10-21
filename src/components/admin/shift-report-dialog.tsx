@@ -25,7 +25,12 @@ import { formatINR, formatTime, friendlyDate, toDateKey, shiftDateKey } from '@/
 import type { ShiftReportResponse } from '@/lib/types'
 import { useAppStore } from '@/store/use-app-store'
 import { canShareFiles } from '@/components/billing/receipt-pdf'
-import { shiftReportFile, downloadShiftReportPdf, type ReportContext } from './report-pdf'
+import {
+  shiftReportFile,
+  downloadShiftReportPdf,
+  type ReportContext,
+  type ShiftTillCount,
+} from './report-pdf'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,23 +53,81 @@ const METHODS = [
  * the number of each note/coin they're holding; the running sum is compared
  * to the day's `cashCollected` so they can spot a shortfall or surplus
  * before the manager signs off the handover.
+ *
+ * The counts live in the DIALOG (lifted state) so the share/download actions
+ * can print them on the handover PDF; today's count is mirrored to
+ * localStorage so closing the dialog (or a mid-count reload) never loses it.
  */
 const DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1] as const
+
+type TillCounts = Record<number, string>
+
+function emptyTillCounts(): TillCounts {
+  const seed: TillCounts = {}
+  for (const d of DENOMINATIONS) seed[d] = ''
+  return seed
+}
+
+/** localStorage key — one snapshot per staff member per day. */
+function tillStorageKey(staffKey: string, date: string): string {
+  return `sx-till-${staffKey}-${date}`
+}
+
+/** Same-day snapshot for this staff member + day, or an empty grid. Corrupted
+ *  or foreign payloads fall back to empty — the count is always re-enterable. */
+function loadTillCounts(staffKey: string, date: string): TillCounts {
+  const seed = emptyTillCounts()
+  if (typeof window === 'undefined') return seed
+  try {
+    const raw = window.localStorage.getItem(tillStorageKey(staffKey, date))
+    if (!raw) return seed
+    const parsed = JSON.parse(raw) as { counts?: Record<string, unknown> } | null
+    if (!parsed || typeof parsed !== 'object' || !parsed.counts) return seed
+    for (const d of DENOMINATIONS) {
+      const v = parsed.counts[String(d)]
+      if (typeof v === 'string' && /^\d{0,5}$/.test(v)) seed[d] = v
+    }
+  } catch {
+    // corrupted snapshot — start clean
+  }
+  return seed
+}
+
+/** Persist today's grid + purge this staff member's stale-day snapshots, so
+ *  storage never accumulates and yesterday's count can never bleed into a new
+ *  day (the date is part of the key — only the same day ever restores). */
+function saveTillCounts(staffKey: string, date: string, counts: TillCounts): void {
+  if (typeof window === 'undefined') return
+  try {
+    const key = tillStorageKey(staffKey, date)
+    const prefix = `sx-till-${staffKey}-`
+    const stale: string[] = []
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i)
+      if (k && k.startsWith(prefix) && k !== key) stale.push(k)
+    }
+    for (const k of stale) window.localStorage.removeItem(k)
+    window.localStorage.setItem(key, JSON.stringify({ counts }))
+  } catch {
+    // storage blocked/full — the in-memory count still prints on the PDF
+  }
+}
 
 function formatDenom(d: number): string {
   // ₹2000 → "₹2000", ₹5 → "₹5"
   return `₹${d}`
 }
 
-function TillCountCard({ expectedCash }: { expectedCash: number }) {
+function TillCountCard({
+  expectedCash,
+  counts,
+  onSetCount,
+}: {
+  expectedCash: number
+  counts: TillCounts
+  onSetCount: (d: number, v: string) => void
+}) {
   const [open, setOpen] = useState(false)
-  // One string-state per denomination so the staff can type freely without
-  // the inputs re-coercing to numbers under their cursor.
-  const [counts, setCounts] = useState<Record<number, string>>(() => {
-    const seed: Record<number, string> = {}
-    for (const d of DENOMINATIONS) seed[d] = ''
-    return seed
-  })
 
   const countedTotal = useMemo(
     () =>
@@ -84,19 +147,13 @@ function TillCountCard({ expectedCash }: { expectedCash: number }) {
     0,
   )
 
-  function setCount(d: number, v: string) {
-    // Whole-number, non-negative only. Coins allow zero, blanks are empty.
-    const clean = v.replace(/[^\d]/g, '').slice(0, 5)
-    setCounts((s) => ({ ...s, [d]: clean }))
-  }
-
   return (
     <div className="hairline overflow-hidden rounded-xl bg-card">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/40"
+        className="flex min-h-11 w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/40"
       >
         <Banknote className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
         <div className="min-w-0 flex-1">
@@ -135,7 +192,7 @@ function TillCountCard({ expectedCash }: { expectedCash: number }) {
             {DENOMINATIONS.map((d) => (
               <label
                 key={d}
-                className="flex items-center justify-between gap-1.5 rounded-lg border bg-card px-2 py-1.5"
+                className="flex min-h-11 items-center justify-between gap-1.5 rounded-lg border bg-card px-2.5 py-2"
               >
                 <span className="tnum text-xs font-semibold">{formatDenom(d)}</span>
                 <span className="text-[10px] text-muted-foreground">×</span>
@@ -143,10 +200,10 @@ function TillCountCard({ expectedCash }: { expectedCash: number }) {
                   type="text"
                   inputMode="numeric"
                   value={counts[d]}
-                  onChange={(e) => setCount(d, e.target.value)}
+                  onChange={(e) => onSetCount(d, e.target.value)}
                   placeholder="0"
                   aria-label={`Count of ${formatDenom(d)} notes or coins`}
-                  className="tnum w-12 rounded border bg-background px-1.5 py-0.5 text-right text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="tnum h-8 w-14 rounded-md border bg-background px-1.5 text-right text-xs font-semibold focus:border-ring focus:outline-none focus:ring-[3px] focus:ring-ring/50"
                 />
               </label>
             ))}
@@ -208,6 +265,33 @@ export function ShiftReportDialog({
   const [date, setDate] = useState(() => toDateKey(new Date()))
   const today = toDateKey(new Date())
 
+  // Till-count grid — lifted state, shared by the on-screen card AND the PDF
+  // actions below. One snapshot per staff member per day: the viewed staff
+  // member's id, falling back to the signed-in user's own id (self dialog).
+  const tillStaffKey = staffId ?? user?.id ?? 'me'
+  const [tillCounts, setTillCounts] = useState<TillCounts>(emptyTillCounts)
+
+  // Re-seed the grid whenever the staff member or the viewed day changes
+  // (React's adjust-during-render pattern — same as the date reset above).
+  // Only the SAME DAY restores: the storage key carries the date and the
+  // purge in saveTillCounts() removes other days, so reviewing a past day or
+  // opening the dialog on a new day always starts with an empty grid.
+  const tillSeedKey = `${tillStaffKey}|${date}`
+  const [tillSeeded, setTillSeeded] = useState<string | null>(null)
+  if (tillSeeded !== tillSeedKey) {
+    setTillSeeded(tillSeedKey)
+    setTillCounts(date === today ? loadTillCounts(tillStaffKey, date) : emptyTillCounts())
+  }
+
+  function setTillCount(d: number, v: string) {
+    // Whole-number, non-negative only. Coins allow zero, blanks are empty.
+    const clean = v.replace(/[^\d]/g, '').slice(0, 5)
+    const next = { ...tillCounts, [d]: clean }
+    setTillCounts(next)
+    // Only the CURRENT day's count is persisted — past-day reviews stay transient.
+    if (date === today) saveTillCounts(tillStaffKey, date, next)
+  }
+
   // Every fresh open (or switching staff member in the Staff view) starts on
   // today — adjusted during render (React's recommended pattern, no effect).
   const sessionKey = open ? (staffId ?? 'me') : null
@@ -234,9 +318,32 @@ export function ShiftReportDialog({
     tenantName: null,
   }
 
+  // The PDF payload — only when at least one denomination was counted, so an
+  // untouched grid never prints a misleading "₹0 in drawer" shortfall.
+  const till = useMemo<ShiftTillCount | undefined>(() => {
+    const numeric: Record<number, number> = {}
+    let counted = 0
+    let any = false
+    for (const d of DENOMINATIONS) {
+      const n = Number(tillCounts[d] || 0) || 0
+      if (n > 0) {
+        numeric[d] = n
+        counted += n * d
+        any = true
+      }
+    }
+    if (!any || !shift) return undefined
+    return {
+      counts: numeric,
+      expected: shift.summary.cashCollected,
+      counted,
+      delta: Math.round((counted - shift.summary.cashCollected) * 100) / 100,
+    }
+  }, [tillCounts, shift])
+
   function sharePdf() {
     if (!shift) return
-    const file = shiftReportFile(shift, ctx)
+    const file = shiftReportFile(shift, ctx, till)
     if (canShareFiles(file) && typeof navigator.share === 'function') {
       void navigator
         .share({
@@ -247,7 +354,7 @@ export function ShiftReportDialog({
         .catch(() => undefined)
       return
     }
-    downloadShiftReportPdf(shift, ctx)
+    downloadShiftReportPdf(shift, ctx, till)
     toast.success('Shift report downloaded', {
       description: 'Send it to the branch owner for the handover.',
     })
@@ -341,7 +448,10 @@ export function ShiftReportDialog({
             </Button>
           </div>
         ) : (
-          <div className="space-y-4">
+          /* min-w-0: the bill rows carry nowrap truncate text — without it
+             their intrinsic min-content forces a horizontal scroll inside
+             DialogContent's grid on 360px phones. */
+          <div className="min-w-0 space-y-4">
             {/* Headline numbers */}
             <div className="grid grid-cols-3 gap-2">
               <motion.div
@@ -424,8 +534,14 @@ export function ShiftReportDialog({
 
             {/* Till-count denomination calculator (collapsible).
                  Staff count their drawer before handing over — the delta vs
-                 expected cash highlights any shortfall/surplus up front. */}
-            <TillCountCard expectedCash={shift.summary.cashCollected} />
+                 expected cash highlights any shortfall/surplus up front. The
+                 counts print on the PDF (see `till` above) and today's grid
+                 survives a dialog close/reopen. */}
+            <TillCountCard
+              expectedCash={shift.summary.cashCollected}
+              counts={tillCounts}
+              onSetCount={setTillCount}
+            />
 
             {/* Bill list */}
             <div className="hairline overflow-hidden rounded-xl bg-card">
@@ -463,7 +579,7 @@ export function ShiftReportDialog({
               <Button
                 variant="outline"
                 className="gap-2"
-                onClick={() => downloadShiftReportPdf(shift, ctx)}
+                onClick={() => downloadShiftReportPdf(shift, ctx, till)}
                 aria-label="Download shift report PDF"
               >
                 <Download className="size-4" aria-hidden />
@@ -472,7 +588,9 @@ export function ShiftReportDialog({
             </div>
             <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-muted-foreground">
               <Users className="size-3" aria-hidden />
-              The manager signs the printed copy when the cash is handed over.
+              {till
+                ? 'The till count and signature lines print on the PDF — count the drawer before sharing.'
+                : 'The manager signs the printed copy when the cash is handed over.'}
             </p>
           </div>
         )}

@@ -3,18 +3,20 @@ import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
 import { toTransactionDTO } from "@/lib/serialize"
+import { rateLimit, tooManyRequests } from "@/lib/rate-limit"
 
 export const dynamic = "force-dynamic"
 
 const voidSchema = z.object({
   id: z.string().min(1),
-  reason: z.string().trim().max(200).optional().nullable(),
+  reason: z.string().trim().min(3, "Please enter a reason").max(200),
 })
 
 /**
  * PUT /api/transactions/void — ADMIN only.
- * Marks a bill VOIDED with an audit trail (who/when/why) and reverses the
- * customer aggregates (visits / totalSpend / lastVisitAt) that the bill created.
+ * Marks a bill VOIDED with an audit trail (who/when/why — reason required)
+ * and reverses the customer aggregates (visits / totalSpend / lastVisitAt)
+ * that the bill created.
  * Tenant-isolated: an admin can only ever void bills of their own franchise.
  */
 export async function PUT(request: Request) {
@@ -22,13 +24,18 @@ export async function PUT(request: Request) {
   if (!auth.user) return auth.response
   const user = auth.user
 
+  // Voiding is rare and destructive — a tight per-user guard keeps a runaway
+  // script from shredding the ledger.
+  const rl = rateLimit(`void:${user.id}`, 30, 60_000)
+  if (!rl.ok) return tooManyRequests(rl.retryAfter)
+
   if (!user.tenantId) {
     return NextResponse.json({ error: "No franchise on this account" }, { status: 403 })
   }
 
   const parsed = voidSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid input" }, { status: 400 })
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 })
   }
   const { id, reason } = parsed.data
 
@@ -53,7 +60,7 @@ export async function PUT(request: Request) {
         status: "VOIDED",
         voidedAt: new Date(),
         voidedByUserId: user.id,
-        voidReason: reason || null,
+        voidReason: reason,
       },
     })
     if (updated.count === 0) {
@@ -86,7 +93,7 @@ export async function PUT(request: Request) {
       data: { redeemedAt: null, redeemedByTransactionId: null },
     })
 
-    const fresh = await tx.transaction.findUniqueOrThrow({ where: { id }, include: { items: true } })
+    const fresh = await tx.transaction.findUniqueOrThrow({ where: { id }, include: { items: true, payments: true } })
     return { transaction: fresh }
   })
 

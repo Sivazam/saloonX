@@ -36,9 +36,11 @@ interface BusyHoursCardProps {
   data?: HoursStatsResponse
   loading: boolean
   rangeLabel: string
+  /** Translated card title — defaults to English (kept for any other callers). */
+  title?: string
 }
 
-export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps) {
+export function BusyHoursCard({ data, loading, rangeLabel, title = 'Busy Hours' }: BusyHoursCardProps) {
   const [hovered, setHovered] = useState<string | null>(null)
 
   const grid = useMemo(() => {
@@ -109,7 +111,7 @@ export function BusyHoursCard({ data, loading, rangeLabel }: BusyHoursCardProps)
         <div>
           <h2 className="flex items-center gap-2 text-sm font-bold">
             <CalendarClock className="size-4 text-primary" aria-hidden />
-            Busy Hours
+            {title}
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {rangeLabel} · when customers actually walk in

@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet, apiPost } from '@/lib/api-client'
+import { readLocalCache, writeLocalCache } from '@/lib/local-cache'
 import {
   enqueueBill,
   newRequestId,
@@ -18,6 +19,7 @@ import type {
   CustomerDTO,
   LookupResponse,
   PaymentMethod,
+  PaymentSlice,
   TransactionDTO,
 } from '@/lib/types'
 import { useAppStore, useT } from '@/store/use-app-store'
@@ -34,6 +36,11 @@ import { Button } from '@/components/ui/button'
 import { LangToggle } from '@/components/shell/lang-toggle'
 
 type Step = 1 | 2 | 3 | 4
+
+type DiscountSource = 'NONE' | 'LOYALTY' | 'MENU' | 'MANUAL'
+
+/** Offline-cold-start cache window for the catalog / branch profile. */
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 const slideVariants = {
   enter: (dir: number) => ({ x: 40 * dir, opacity: 0 }),
@@ -67,6 +74,14 @@ export default function BillingFlow() {
   const [walkIn, setWalkIn] = useState(false)
   const [name, setName] = useState('')
   const [discountPct, setDiscountPct] = useState(0)
+  /** Flat-₹ discount — mutually exclusive with discountPct (0 = none). */
+  const [discountFlat, setDiscountFlat] = useState(0)
+  /** Staff-collected tip, added after GST. */
+  const [tipAmount, setTipAmount] = useState(0)
+  /** What produced the active discount — gates QR-menu offer redemption. */
+  const [discountSource, setDiscountSource] = useState<DiscountSource>('NONE')
+  /** Split payment slices once confirmed (null until split mode is used). */
+  const [splitPayments, setSplitPayments] = useState<PaymentSlice[] | null>(null)
   const [loyaltyDecision, setLoyaltyDecision] = useState<LoyaltyDecision>('none')
   const [note, setNote] = useState('')
 
@@ -117,17 +132,34 @@ export default function BillingFlow() {
 
   const keypad = useKeypad(10, handleFull)
 
-  // ── Data ─────────────────────────────────────────────────────────────────
+  // ── Data (with offline cold-start cache) ─────────────────────────────────
   // Catalog + branch profile are branch-scoped — they refetch when the
-  // header branch switcher invalidates queries.
+  // header branch switcher invalidates queries. The last successful response
+  // per branch is mirrored to localStorage so billing step 1 (and the payment
+  // settings) survive a reload with no network.
   const catalogQuery = useQuery({
     queryKey: ['catalog', currentBranch?.id],
     queryFn: () => apiGet<CatalogResponse>('/api/catalog'),
+    initialData: () =>
+      (branchId ? readLocalCache<CatalogResponse>(`sx-catalog-${branchId}`, CACHE_TTL_MS) : null) ?? undefined,
   })
   const branchQuery = useQuery({
     queryKey: ['branch', currentBranch?.id],
     queryFn: () => apiGet<{ branch: BranchProfileDTO }>('/api/branch'),
+    initialData: () =>
+      (branchId ? readLocalCache<{ branch: BranchProfileDTO }>(`sx-branch-${branchId}`, CACHE_TTL_MS) : null) ?? undefined,
   })
+
+  useEffect(() => {
+    if (catalogQuery.data && branchId) writeLocalCache(`sx-catalog-${branchId}`, catalogQuery.data)
+  }, [catalogQuery.data, branchId])
+  useEffect(() => {
+    if (branchQuery.data && branchId) writeLocalCache(`sx-branch-${branchId}`, branchQuery.data)
+  }, [branchQuery.data, branchId])
+
+  // Fetch failed but the cached copy is on screen — a quiet amber notice, not
+  // a blocking error (the staff can still bill from the saved menu).
+  const usingSavedMenu = catalogQuery.isError && catalogQuery.data != null
 
   // Empty cart can't proceed past services (derived, no effects).
   const effStep: Step =
@@ -147,6 +179,8 @@ export default function BillingFlow() {
   const handleLoyaltyDecision = (d: LoyaltyDecision) => {
     setLoyaltyDecision(d)
     setDiscountPct(d === 'applied' && recommendation ? recommendation.discountPct : 0)
+    setDiscountFlat(0)
+    setDiscountSource(d === 'applied' ? 'LOYALTY' : 'NONE')
   }
 
   /** QR-menu signup offer — same single-discount slot as loyalty, amber banner. */
@@ -154,49 +188,80 @@ export default function BillingFlow() {
     if (!menuOffer) return
     setLoyaltyDecision('applied')
     setDiscountPct(menuOffer.pct)
+    setDiscountFlat(0)
+    setDiscountSource('MENU')
+  }
+
+  /** Manual discount from the payment screen — % OR flat ₹, never both. */
+  const handleManualDiscount = (v: { pct?: number; flat?: number }) => {
+    if (v.flat != null && v.flat > 0) {
+      setDiscountFlat(v.flat)
+      setDiscountPct(0)
+      setDiscountSource('MANUAL')
+    } else {
+      const pct = v.pct ?? 0
+      setDiscountPct(pct)
+      setDiscountFlat(0)
+      setDiscountSource(pct > 0 ? 'MANUAL' : 'NONE')
+    }
   }
 
   const handleCustomerContinue = (info: CustomerContinueInfo) => {
     setWalkIn(info.walkIn)
     if (info.walkIn) {
       setDiscountPct(0)
+      setDiscountFlat(0)
+      setDiscountSource('NONE')
     }
     go(3)
+  }
+
+  /** Lookup failed on a server/network error (NOT a plain "not found") — the
+   *  staff can still bill: the mobile lands on the bill, loyalty is skipped. */
+  const handleContinueAnyway = () => {
+    if (keypad.digits.length !== 10) return
+    setFetchedMobile(keypad.digits)
+    setLookupError(null)
   }
 
   // ── Payment → POST /api/transactions (or offline queue) ──────────────────
   const [pendingQueueBill, setPendingQueueBill] = useState<QueuedBill | null>(null)
 
-  /** Network-level failure → the bill still gets saved: enqueue it locally
-   *  and show the success screen with an "offline — will sync" banner.
-   *
-   *  CRITICAL: this MUST accept a clientRequestId/clientCreatedAt generated
-   *  BEFORE the online POST attempt — if the server actually saved the bill
-   *  but the network response was lost, the offline queue reuses the SAME
-   *  idempotency key so the server's P2002 catch replays the winner instead
-   *  of creating a duplicate bill. (Earlier code generated a fresh key here,
-   *  which double-billed every time the network died mid-save.) */
-  const saveOffline = (
-    method: PaymentMethod,
+  const branchProfile = branchQuery.data?.branch
+
+  // Money math mirrors the server exactly (round2 at each step) so the
+  // expectedTotal drift check never fires on healthy data.
+  const subtotal = round2(cart.reduce((s, c) => s + c.price * c.qty, 0))
+  const discountAmount =
+    discountFlat > 0
+      ? round2(Math.min(discountFlat, subtotal))
+      : round2((subtotal * discountPct) / 100)
+  const gstPct = branchProfile?.gstEnabled ? branchProfile.gstPct : 0
+  const gstAmount = round2(((subtotal - discountAmount) * gstPct) / 100)
+  const tip = round2(tipAmount)
+  const expectedTotal = round2(subtotal - discountAmount + gstAmount + tip)
+
+  /** Payload shared by the online POST and the offline queue. The offline
+   *  copy intentionally omits expectedTotal (an unattended sync cannot answer
+   *  a 409 drift prompt). */
+  const buildPayload = (
     clientRequestId: string,
     clientCreatedAt: Date,
-  ) => {
-    const branchProfile = branchQuery.data?.branch
-    const items = cart.map((c) =>
-      c.custom
-        ? { name: c.name, price: c.price, qty: c.qty }
-        : { serviceId: c.serviceId!, qty: c.qty },
-    )
-    const subtotal = round2(cart.reduce((s, c) => s + c.price * c.qty, 0))
-    const discountAmount = round2((subtotal * discountPct) / 100)
-    const gstPct = branchProfile?.gstEnabled ? branchProfile.gstPct : 0
-    const gstAmount = round2(((subtotal - discountAmount) * gstPct) / 100)
-    const total = round2(subtotal - discountAmount + gstAmount)
-
+    method: PaymentMethod | null,
+    payments?: PaymentSlice[],
+  ): Record<string, unknown> => {
     const body: Record<string, unknown> = {
-      items,
-      discountPct,
-      paymentMethod: method,
+      items: cart.map((c) =>
+        c.custom
+          ? { name: c.name, price: c.price, qty: c.qty }
+          : { serviceId: c.serviceId, qty: c.qty },
+      ),
+      discountPct: discountFlat > 0 ? 0 : discountPct,
+      ...(discountFlat > 0 ? { discountFlat } : {}),
+      ...(tip > 0 ? { tipAmount: tip } : {}),
+      ...(discountSource !== 'NONE' ? { discountSource } : {}),
+      ...(payments && payments.length > 0 ? { payments } : {}),
+      ...(!payments || payments.length === 0 ? { paymentMethod: method ?? 'CASH' } : {}),
       clientRequestId,
       clientCreatedAt: clientCreatedAt.toISOString(),
     }
@@ -206,12 +271,42 @@ export default function BillingFlow() {
       const customerName = (name.trim() || customer?.name || '').trim()
       if (customerName) body.customerName = customerName
     }
+    return body
+  }
 
-    const bill: QueuedBill = {
+  /** Network-level failure → the bill still gets saved: enqueue it locally
+   *  and show the success screen with an "offline — will sync" banner.
+   *
+   *  CRITICAL: this MUST accept a clientRequestId/clientCreatedAt generated
+   *  BEFORE the online POST attempt — if the server actually saved the bill
+   *  but the network response was lost, the offline queue reuses the SAME
+   *  idempotency key so the server's P2002 catch replays the winner instead
+   *  of creating a duplicate bill. (Earlier code generated a fresh key here,
+   *  which double-billed every time the network died mid-save.)
+   *
+   *  CRITICAL #2: enqueueBill is AWAITED. IndexedDB can be unavailable (iOS
+   *  private mode, quota) — a fire-and-forget enqueue used to show the success
+   *  screen for a bill that was never stored anywhere. On failure we now keep
+   *  the payment step mounted, toast, and let the staff retry. */
+  const saveOffline = async (
+    method: PaymentMethod | null,
+    clientRequestId: string,
+    clientCreatedAt: Date,
+    payments?: PaymentSlice[],
+  ): Promise<boolean> => {
+    const body = buildPayload(clientRequestId, clientCreatedAt, method, payments)
+    const previewPayments: PaymentSlice[] =
+      payments && payments.length > 0
+        ? payments
+        : [{ method: method ?? 'CASH', amount: round2(expectedTotal) }]
+    const previewMethod: PaymentSlice['method'] | 'SPLIT' =
+      previewPayments.length > 1 ? 'SPLIT' : previewPayments[0].method
+
+    const queuedBill: QueuedBill = {
       clientRequestId,
-      payload: body as QueuedBill['payload'],
+      payload: body as unknown as QueuedBill['payload'],
       display: {
-        total,
+        total: expectedTotal,
         itemCount: cart.reduce((s, c) => s + c.qty, 0),
         itemSummary:
           cart.length === 1
@@ -219,12 +314,27 @@ export default function BillingFlow() {
             : `${cart[0].name} +${cart.length - 1} more`,
         branchName: currentBranch?.name ?? '',
         createdAt: clientCreatedAt.toISOString(),
+        tipAmount: tip,
+        discountFlat: discountFlat > 0 ? discountFlat : undefined,
+        payments: previewPayments,
       },
       attempts: 0,
       lastError: null,
       queuedAt: clientCreatedAt.toISOString(),
     }
-    void enqueueBill(bill)
+
+    try {
+      await enqueueBill(queuedBill)
+    } catch {
+      // Storage unavailable — do NOT clear the cart, do NOT advance: the
+      // payment step stays mounted so the staff can retry (or re-bill once
+      // storage/network returns). The paper receipt is the fallback record.
+      toast.error(L.offlineSaveFailed, {
+        description: L.offlineSaveFailedHint,
+        duration: 10000,
+      })
+      return false
+    }
 
     // Local preview so the staff can hand over a receipt right away.
     const preview: TransactionDTO = {
@@ -239,12 +349,15 @@ export default function BillingFlow() {
       staffId: user?.id ?? '',
       staffName: user?.name ?? '',
       subtotal,
-      discountPct,
+      discountPct: discountFlat > 0 ? 0 : discountPct,
       discountAmount,
+      discountFlat: discountFlat > 0 ? discountFlat : null,
       gstPct,
       gstAmount,
-      total,
-      paymentMethod: method,
+      tipAmount: tip,
+      total: expectedTotal,
+      paymentMethod: previewMethod,
+      payments: previewPayments,
       note: note.trim() || null,
       status: 'PENDING_SYNC',
       voidedAt: null,
@@ -261,7 +374,7 @@ export default function BillingFlow() {
     setLastBill(preview)
     setBill(preview)
     setBillBranch(branchProfile ?? null)
-    setPendingQueueBill(bill)
+    setPendingQueueBill(queuedBill)
     clearCart()
     setDir(1)
     setStep(4)
@@ -269,13 +382,21 @@ export default function BillingFlow() {
       description: L.savedOfflineHint,
       duration: 6000,
     })
+    return true
   }
 
-  const confirmPayment = async (method: PaymentMethod) => {
+  const confirmPayment = async (method: PaymentMethod | null, payments?: PaymentSlice[]) => {
     if (submitting || cart.length === 0) return
+    if (payments && payments.length > 0) setSplitPayments(payments)
+    else if (splitPayments) setSplitPayments(null) // fell back to a single method
     // No internet → don't even try: queue and succeed locally.
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      saveOffline(method, newRequestId(), new Date())
+      setSubmitting(true)
+      try {
+        await saveOffline(method, newRequestId(), new Date(), payments)
+      } finally {
+        setSubmitting(false)
+      }
       return
     }
     setSubmitting(true)
@@ -287,21 +408,9 @@ export default function BillingFlow() {
     const clientCreatedAt = new Date()
     try {
       const body: Record<string, unknown> = {
-        items: cart.map((c) =>
-          c.custom
-            ? { name: c.name, price: c.price, qty: c.qty }
-            : { serviceId: c.serviceId, qty: c.qty },
-        ),
-        discountPct,
-        paymentMethod: method,
-        clientRequestId,
-        clientCreatedAt: clientCreatedAt.toISOString(),
-      }
-      if (note.trim()) body.note = note.trim()
-      if (!walkIn && keypad.digits.length === 10 && fetchedMobile === keypad.digits) {
-        body.customerMobile = keypad.digits
-        const customerName = (name.trim() || customer?.name || '').trim()
-        if (customerName) body.customerName = customerName
+        ...buildPayload(clientRequestId, clientCreatedAt, method, payments),
+        // Online-only: lets the server 409 if prices/tax changed under us.
+        expectedTotal,
       }
       const res = await apiPost<{ transaction: TransactionDTO; branch: BranchProfileDTO | null }>(
         '/api/transactions',
@@ -309,7 +418,7 @@ export default function BillingFlow() {
       )
       setLastBill(res.transaction)
       setBill(res.transaction)
-      setBillBranch(res.branch ?? branchQuery.data?.branch ?? null)
+      setBillBranch(res.branch ?? branchProfile ?? null)
       setPendingQueueBill(null)
       clearCart()
       setDir(1)
@@ -322,9 +431,11 @@ export default function BillingFlow() {
       // network failure rather than matching fragile message strings.
       const offlineNow = typeof navigator !== 'undefined' && !navigator.onLine
       if (offlineNow || e instanceof TypeError) {
-        saveOffline(method, clientRequestId, clientCreatedAt)
+        await saveOffline(method, clientRequestId, clientCreatedAt, payments)
         return
       }
+      // Server rejection (validation / drift 409 / rate limit) — surface the
+      // message; the payment step stays mounted for a retry.
       toast.error(e instanceof Error ? e.message : L.couldNotSave)
     } finally {
       setSubmitting(false)
@@ -342,6 +453,10 @@ export default function BillingFlow() {
     setWalkIn(false)
     setName('')
     setDiscountPct(0)
+    setDiscountFlat(0)
+    setTipAmount(0)
+    setDiscountSource('NONE')
+    setSplitPayments(null)
     setLoyaltyDecision('none')
     setNote('')
   }
@@ -432,12 +547,15 @@ export default function BillingFlow() {
                   categories={catalogQuery.data?.categories ?? []}
                   loading={catalogQuery.isLoading}
                   error={
-                    catalogQuery.error instanceof Error
-                      ? catalogQuery.error.message
-                      : catalogQuery.isError
-                        ? 'Something went wrong'
-                        : null
+                    usingSavedMenu
+                      ? null // cached menu is usable — show the badge, not the error
+                      : catalogQuery.error instanceof Error
+                        ? catalogQuery.error.message
+                        : catalogQuery.isError
+                          ? 'Something went wrong'
+                          : null
                   }
+                  savedMenu={usingSavedMenu}
                   onRetry={() => void catalogQuery.refetch()}
                   onContinue={() => go(2)}
                 />
@@ -472,6 +590,7 @@ export default function BillingFlow() {
                   onLoyaltyDecision={handleLoyaltyDecision}
                   menuOffer={menuOffer}
                   onApplyMenuOffer={handleApplyMenuOffer}
+                  onContinueAnyway={handleContinueAnyway}
                   onLookup={() => {
                     if (keypad.digits.length !== 10) {
                       toast.error(L.enterFullMobile)
@@ -499,11 +618,15 @@ export default function BillingFlow() {
                   cart={cart}
                   branch={branchQuery.data.branch}
                   discountPct={discountPct}
-                  onDiscountChange={setDiscountPct}
+                  discountFlat={discountFlat}
+                  onDiscountChange={handleManualDiscount}
+                  tipAmount={tipAmount}
+                  onTipChange={setTipAmount}
                   note={note}
                   onNoteChange={setNote}
                   submitting={submitting}
                   onConfirm={(m) => void confirmPayment(m)}
+                  onConfirmSplit={(payments) => void confirmPayment(null, payments)}
                 />
               </motion.div>
             )}

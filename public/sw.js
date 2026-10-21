@@ -1,8 +1,14 @@
-/* SaloonX service worker — conservative offline shell.
-   Note: JS/CSS are NOT cache-first — in dev they are unhashed and caching
-   them would serve stale code after edits. Cache-first is limited to
-   immutable brand assets (icons, images, fonts). */
-const CACHE_VERSION = "saloonx-v2"
+/* SaloonX service worker — offline shell + stale-while-revalidate code cache.
+   - Brand assets (icons, images, fonts): cache-first (immutable).
+   - Next.js code chunks (/_next/static/**): STALE-WHILE-REVALIDATE — always
+     try the network so deployed updates apply immediately, but keep a copy
+     so an installed PWA can cold-start offline (a plain network-first would
+     also work, but SWR lets a slow 2G connection render instantly from cache
+     while refreshing in the background). Dev safety: dev chunks change on
+     every edit and SWR revalidates them, so hot reload is never poisoned.
+   - Documents (the app shell): network-first with cache fallback.
+   - /api/** is NEVER cached — billing data must always be live. */
+const CACHE_VERSION = "saloonx-v3"
 const PRECACHE = ["/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"]
 
 self.addEventListener("install", (event) => {
@@ -22,6 +28,11 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   )
+})
+
+self.addEventListener("message", (event) => {
+  // The page asks the waiting worker to take over (update prompt "Reload").
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting()
 })
 
 self.addEventListener("fetch", (event) => {
@@ -52,7 +63,29 @@ self.addEventListener("fetch", (event) => {
     return
   }
 
-  // Network-first for pages and code, falling back to cache when offline.
+  // Stale-while-revalidate for hashed build output (JS/CSS chunks).
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        const cached = await cache.match(request)
+        const network = fetch(request)
+          .then((response) => {
+            if (response.ok) cache.put(request, response.clone())
+            return response
+          })
+          .catch(() => null)
+        // Serve from cache instantly if we have it; otherwise wait for network.
+        if (cached) {
+          return cached
+        }
+        const fresh = await network
+        return fresh || Response.error()
+      })
+    )
+    return
+  }
+
+  // Network-first for documents, falling back to cache when offline.
   event.respondWith(
     fetch(request)
       .then((response) => {

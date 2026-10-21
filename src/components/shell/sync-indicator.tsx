@@ -280,7 +280,11 @@ export function SyncIndicator() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-semibold">{b.display.itemSummary}</p>
                     <p className="tnum truncate text-[11px] text-muted-foreground">
-                      {formatINR(b.display.total)} · {b.payload.paymentMethod} · {formatTime(b.display.createdAt)}
+                      {formatINR(b.display.total)} ·{' '}
+                      {b.payload.payments && b.payload.payments.length > 1
+                        ? 'SPLIT'
+                        : (b.payload.payments?.[0]?.method ?? b.payload.paymentMethod)}{' '}
+                      · {formatTime(b.display.createdAt)}
                       {b.lastError ? ` · ⚠ ${b.lastError}` : ''}
                     </p>
                     {b.attempts >= MAX_SYNC_ATTEMPTS && (

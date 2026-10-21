@@ -16,7 +16,7 @@ import {
 import { formatINR, formatDate } from '@/lib/format'
 import type { CustomerDTO, LastVisitDTO, LookupResponse } from '@/lib/types'
 import type { CartItem } from '@/store/use-app-store'
-import { useT } from '@/store/use-app-store'
+import { useAppStore, useT } from '@/store/use-app-store'
 import type { KeypadState } from '../use-keypad'
 import { formatMobileDisplay } from '../use-keypad'
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,8 @@ interface CustomerStepProps {
   lastVisit: LastVisitDTO | null
   menuOffer: LookupResponse['menuOffer']
   onApplyMenuOffer: () => void
+  /** Lookup failed on a server/network error — bill anyway with this mobile. */
+  onContinueAnyway: () => void
   fetchedMobile: string | null
   lookupLoading: boolean
   lookupError: string | null
@@ -137,6 +139,7 @@ export function CustomerStep({
   lastVisit,
   menuOffer,
   onApplyMenuOffer,
+  onContinueAnyway,
   fetchedMobile,
   lookupLoading,
   lookupError,
@@ -152,6 +155,9 @@ export function CustomerStep({
   onContinue,
 }: CustomerStepProps) {
   const L = useT()
+  // ADMINs get the mobile bottom nav (fixed, z-40) — lift the sticky action
+  // bar above it on phones so Continue is never covered mid-scroll.
+  const hasMobileNav = useAppStore((s) => s.user?.role === 'ADMIN')
   const totalQty = cart.reduce((a, c) => a + c.qty, 0)
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0)
 
@@ -294,8 +300,19 @@ export function CustomerStep({
               className="rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-center"
               role="alert"
             >
-              <p className="font-semibold text-destructive">{lookupError}</p>
+              <p className="font-semibold text-destructive">{L.lookupFailedTitle}</p>
+              <p className="mt-1 text-xs text-muted-foreground/80">{lookupError}</p>
               <p className="mt-1 text-sm text-muted-foreground">{L.checkNumberAgain}</p>
+              {/* The show must go on: bill with this mobile anyway (loyalty
+                  simply skipped) instead of losing the customer attribution. */}
+              <Button
+                variant="outline"
+                className="mt-3 h-12 px-5"
+                onClick={onContinueAnyway}
+              >
+                {L.continueAnyway}
+              </Button>
+              <p className="mt-1.5 text-xs text-muted-foreground">{L.continueAnywayHint}</p>
             </motion.div>
           ) : showBanner && customer && recommendation ? (
             <motion.div
@@ -481,7 +498,13 @@ export function CustomerStep({
       )}
 
       {/* Sticky bottom bar */}
-      <div className="sticky bottom-4 z-20 mt-6 flex items-center gap-3 bg-background/80 p-1 backdrop-blur-sm [@media(max-height:740px)]:mt-3">
+      <div
+        className={
+          hasMobileNav
+            ? 'sticky bottom-[calc(4.75rem_+_env(safe-area-inset-bottom))] z-20 mt-6 flex items-center gap-3 bg-background/80 p-1 backdrop-blur-sm lg:bottom-4 [@media(max-height:740px)]:mt-3'
+            : 'sticky bottom-4 z-20 mt-6 flex items-center gap-3 bg-background/80 p-1 backdrop-blur-sm [@media(max-height:740px)]:mt-3'
+        }
+      >
         <Button
           variant="ghost"
           className="h-14 shrink-0 px-4 text-muted-foreground [@media(max-height:740px)]:h-12"

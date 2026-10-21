@@ -87,10 +87,13 @@ export function BranchInsightsCard({
   data,
   loading,
   rangeLabel,
+  title = 'Branch insights',
 }: {
   data: BranchCompareResponse | undefined
   loading: boolean
   rangeLabel: string
+  /** Translated card title — defaults to English (kept for any other callers). */
+  title?: string
 }) {
   if (loading || !data || data.branches.length === 0) {
     return (
@@ -124,7 +127,7 @@ export function BranchInsightsCard({
           <Building2 className="size-4" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-bold tracking-tight">Branch insights</h3>
+          <h3 className="text-[15px] font-bold tracking-tight">{title}</h3>
           <p className="text-xs text-muted-foreground">
             {rangeLabel} · {branches.length} branches · franchise{' '}
             <span className={cn('font-semibold', data.franchise.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>

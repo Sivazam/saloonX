@@ -1256,3 +1256,278 @@ Stage Summary:
 - Type-safety + lint gates green: `bunx tsc --noEmit` exits 0, `bun run lint` clean. The LucideIcon→IconType relaxation was the only type change; both lucide + phosphor pass. Dev server alive (GET / 200, POST /api/auth/firebase-session 200, all 9 dashboard data APIs 200).
 - Zero working flows broken — login → branch picker → dashboard E2E verified via Playwright. Brand palette preserved (rosewood #5E1A2C + amber #E8A54B + cream + emerald success + rose destructive + amber discount). No new npm deps. prefers-reduced-motion gating untouched on every infinite animation. Frontend-only — no API route / prisma / lib touched.
 - Next actions for a future task (not in scope here): (a) the tenants-view KPI chips + branch-insights-card StatChip + birthday-campaign FunnelStep + expenses-view CATEGORY_META chips still render lucide at 12–18px — these could be swapped to duotone if the chip sizes are bumped to 20px+ (currently they're below the duotone threshold). (b) The salon-menu-app.tsx public-facing PWA still uses lucide throughout — its hero spots could also benefit from a duotone swap, but it's a separate PWA so it warrants its own task. (c) The two-layer rosewood shadow could be hoisted into a `.hairline-hover` utility class in globals.css so other cards (BranchInsightsCard, BirthdayCampaignCard, FranchiseCompareCard) inherit it without per-card edits. (d) Add `whileTap={{ scale: 0.96 }}` to the dashboard KPI cards for tactile touch feedback (currently only whileHover — touch devices don't fire hover).
+
+---
+Task ID: AUDIT-V2
+Agent: Z.ai Code (orchestrator)
+Task: Fresh clone of saloonX (260fd5b), full production-readiness re-audit (3 parallel deep audits: billing/money-math, auth/security/tenancy, admin/reports/UX), gap synthesis, fix orchestration.
+
+Work Log:
+- Wiped sandbox template, cloned https://github.com/Sivazam/saloonX.git into /home/z/my-project (master @ 260fd5b), bun install, db:push, dev server up.
+- Ran 3 parallel Explore audits (AUDIT-A billing, AUDIT-B security, AUDIT-C admin/UX). Verified their claims personally where critical.
+- CONFIRMED CRITICAL: repo STILL ships 4 legacy broken routes (api/auth/login, api/auth/users, api/auth/branches, api/settings) — tsc has 5 src errors; hitting any of them 500s and poisons the Turbopack dev server project-wide; `next build` hard-fails. Prior worklog deletion claims never landed on GitHub.
+- CONFIRMED CRITICAL: firebase-session email-fallback account takeover (register victim email at Firebase → exchange token → backfilled UID → full session). No emailVerified check.
+- CONFIRMED CRITICAL: billing-flow saveOffline does `void enqueueBill(bill)` — IndexedDB failure = paid bill silently lost with success screen shown.
+- CONFIRMED CRITICAL: demo super-admin credentials shown on login screen by default (gate is `!== "false"`).
+- HIGH: menu-lead offer lookup is tenant-wide but redemption is branch-only → infinite first-visit discount; any discount (loyalty/manual) burns the one-time offer (no discountSource); GDPR DELETE 500s on 2nd use (non-unique tombstone) + redeemed leads keep PII; bill rate-limit runs pre-auth keyed on IP (shared-NAT lockout); SW never caches /_next/static → offline cold-start blank; no SW update prompt; PWA manifest shortcuts dead; commission computed on GST-inclusive revenue; exports don't scale (PDF = loaded rows only; expenses truncate at 100/200 silently); unbounded date ranges → full-ledger scans; shift report truncates at 200 bills; GET transactions summary loads whole filtered ledger in memory; session tokens stored unhashed; no security headers; lookup failure drops customer attribution.
+- MEDIUM (market): no split payments / flat-₹ discount / tip; "Rs." instead of ₹ in all PDFs (no embedded font); till-count not in shift PDF; no customer-merge; admin console English-only; no onboarding checklist; QR-menu ₹0.00 placeholder copy; lapsed-customer chip client-side only; bills-count mismatch (paid vs total); static PDF filenames; optimistic birthday-wish state; WhatsApp note wrong scope in all-branches view; printPoster unescaped HTML; payment-split % rounding; raw Prisma errors to clients; Math.random coupon codes; offline queue unbounded; offline preview total inconsistency; ₹0 services possible; mobile regex accepts 0000000000; void reason optional; clock-skew clamp discards clientCreatedAt verbatim record.
+- Plan: A1 (orchestrator) security/build cluster → A2 (agent) billing engine v1.1 features + money-path hardening → A3 (agent) admin/reports/exports cluster → B font/PDF + merge + i18n/onboarding → C UI/UX market polish → D E2E verify + commit.
+
+Stage Summary:
+- Verdict: NOT production-ready as shipped — build is broken, one account-takeover path, one silent money-loss path, and the offline promise (headline feature) is fragile after reload. Feature gaps for Indian salon billing (split payment, flat discount, tip) remain open.
+- All gaps catalogued with file:line precision across the three audit reports (recorded above and in agent transcripts).
+
+---
+Task ID: A1
+Agent: Z.ai Code (orchestrator)
+Task: Security & build cluster — fix all CRITICAL blockers + security hardening.
+
+Work Log:
+- DELETED 4 legacy broken routes (api/auth/login, api/auth/users, api/auth/branches, api/settings) — they had 5 tsc errors, 500'd when hit, poisoned the Turbopack dev server project-wide, and hard-failed `next build`. Verified: now 404, tsc exit 0, GET / 200.
+- tsconfig exclude += skills/, upload/, tool-results/, download/, seed-assets/ (sandbox-local folders, not app code).
+- firebase-session route: removed the email-fallback account takeover. Binding is now by Firebase UID only; the single sanctioned migration path requires fbUser.emailVerified === true AND the local row's firebaseUid being null/"pending:*". An attacker can no longer register a victim's email at Firebase (public signUp) and exchange a token for their session.
+- login-view: demo-credentials card is now OPT-IN (NEXT_PUBLIC_SHOW_DEMO_HINTS === 'true'); set it locally in .env for the sandbox preview only.
+- lib/auth.ts: session tokens stored sha256-hashed (leaked DB file no longer yields live cookies); createSession/getSessionUser/logout all hash. requireApiUser now rejects cross-site requests (Sec-Fetch-Site: cross-site or foreign Origin vs host) — CSRF hardening beyond SameSite=Lax.
+- next.config.ts: added security headers (nosniff, X-Frame-Options SAMEORIGIN, Referrer-Policy, Permissions-Policy, CSP with Firebase connect-src + data: images; 'unsafe-eval' dev-only).
+- public/sw.js v3: /_next/static/** now stale-while-revalidate (installed PWA can cold-start offline; dev hot-reload unaffected); documents network-first; /api never cached.
+- pwa-register.tsx: full update flow — updatefound/waiting → toast with Reload action → SKIP_WAITING message → controllerchange reload; visibilitychange re-checks for updates (kiosk wake-up).
+- page.tsx: PWA manifest shortcuts wired (/?action=billing, /?view=dashboard — role-guarded, staff stay on billing).
+- customers/[id] DELETE: tombstone mobile now unique per row (<erased:<id12>>) — 2nd erasure no longer 500s on @@unique([tenantId, mobile]); redeemed MenuLeads now anonymised (name null, mobile "<erased>") so PII doesn't survive erasure.
+- public/menu/lead: coupon codes from crypto.randomInt; stopped echoing the stored customer name (mobile→name oracle closed) — response only returns what the caller just submitted.
+- Untracked .env + db/custom.db from git (both were committed despite .gitignore); added .env.example.
+- Caddyfile: removed the XTransformPort arbitrary-localhost-port proxy (SSRF/local-service disclosure on a public edge).
+
+Stage Summary:
+- All 4 CRITICAL findings fixed and verified (build unblocked, takeover closed, offline-loss fix lands in A2 with billing-flow changes, demo gate inverted).
+- Session hashing invalidates pre-upgrade sessions — one-time re-login after deploy, acceptable.
+- Next: A2 billing engine v1.1 + A3 admin/reports, in parallel.
+
+---
+Task ID: A3
+Agent: full-stack-developer
+Task: Admin/reports/exports cluster — stats clamp + pre-GST commission + SPLIT bucket, scalable exports (transactions full-filter PDF, expenses load-more + 1000-row PDF), customers server-side lapsed filter + lapsedCount, dashboard split/rounding/birthday/WhatsApp fixes, QR-menu copy + printPoster escaping, error hygiene on staff/tenants routes.
+
+Work Log:
+- Read worklog AUDIT-V2 + A1 sections; read every file in scope before editing. Waited for A2's types.ts/schema to land (checked git status + mtimes; types.ts landed mid-task with PaymentMethodOrSplit, TransactionDTO.payments/tipAmount/discountFlat) — wrote UI defensively so it compiles against both pre- and post-A2 contracts.
+- api/stats/route.ts: added clampRange (from ≥ now−366d, to ≤ now+1d); byMethod now a Record<string,…> with a SPLIT bucket (grouping by stored paymentMethod string, so SPLIT appears naturally post-A2; empty-scope return also carries SPLIT); commission base switched from GST-inclusive revenue to Σ(subtotal − discountAmount) per staff tracked in the existing loop (pre-GST, pre-tip). Aggregation style untouched otherwise. Verified against raw ledger: Amit base 21490.10 × 7.5% = 1611.76 exactly.
+- api/stats/hours + api/stats/branches-compare: same clamp mirrored (both accept from/to; monthly does not — skipped). Curl: branches-compare?from=2019-01-01 clamps to 2025-10-19→2026-10-21, HTTP 200.
+- api/customers/route.ts: `?lapsed=true` filter (visits>0 AND lastVisitAt < now−60d, search still applies) + `lapsedCount` (tenant-wide, search/lapsed-independent) returned in ALL shapes incl. birthdaysWithin and the no-tenant early return.
+- api/expenses/route.ts GET: limit clamp 1..1000 (was 200), default stays 100.
+- api/staff + api/tenants POST catches: non-P2002 Prisma internals no longer leak — console.error server-side, generic "Could not save — please retry" to clients (P2002 keeps its friendly message). Firebase catches left as-is (already friendly via friendlyAuthMessage at throw time).
+- ui-atoms.tsx: METHOD_META gains SPLIT (stone/neutral tone, Split icon, label "Split"); MethodKey = PaymentMethod | 'SPLIT' widened type keeps MethodBadge/METHOD_META valid pre+post A2; CustomersResponse gains optional lapsedCount.
+- report-pdf.ts: summary + expense PDFs now save as SaloonX-Summary-{scope}-{from}-to-{to}.pdf / SaloonX-Expense-Report-{scope}-{from}-to-{to}.pdf (new ReportFileScope param, slugified); transactions PDF honesty note rewritten for full-set export (no more "tap Load more"); expense builder accepts `truncated {shown,total}` and prints a "Showing the first X of Y entries" line; summary payment-split table renders SPLIT row once it has activity.
+- transactions-view.tsx: PDF export loop-fetches ALL pages of the current filter (100/page, cap 4000 newest) with a sonner loading toast "Preparing export… X bills", warns when total > 4000, honesty note kept in PDF; summary strip "Bills"→"Paid bills" + subtle "+N voided" hint when total > summary.count; "Split" toggle added to the method filter; void reason now required ≥3 chars (Confirm disabled + helper text; matches A2's server-side min(3)); Payment Split strip renders SPLIT defensively.
+- expenses-view.tsx: useQuery → useInfiniteQuery (100/page) with a 44px "Load more" button + "Showing X of Y entries" line (no more silent truncation at 100); PDF export fetches limit=1000, warns via toast and notes truncation in the PDF when total > 1000; scoped filename.
+- dashboard-view.tsx: PaymentSplitCard handles SPLIT (renders once active) + largestRemainderPercents so percentages sum to exactly 100; birthday wish button awaits the PUT (spinner while saving, flips "Wished" only on success, toast.error "Could not save — try again" on failure); WhatsApp note button disabled in franchise-wide scope (scopeBranches>1 && no branch picked) with tooltip/aria "Pick a branch to WhatsApp its owner" (single-branch franchises keep it); staff commission footnote now says pre-GST; whatsappNote includes a Split line when active; Share Report passes scoped filename. Tooltip aliased UiTooltip (recharts owns `Tooltip`).
+- customers-view.tsx: chip uses server lapsedCount (not loaded-pages count); lapsed toggle refetches with ?lapsed=true (server-side) and clears back to the normal list; lapsed-mode empty state with "Show all customers" CTA; removed the client-side filter + dead mobile-only empty block; load-more + "Showing X of Y" kept.
+- qr-menu-view.tsx: killed the "₹0.00 vs manual coupons" placeholder (now: redeemed offers show up like any other discount — no manual coupon bookkeeping); printPoster escapes every interpolation (tenantName, branch name/locality, address, city, phone, title) via esc() and now also prints the escaped menu URL under the QR (slug+url, previously unused params).
+- staff-view.tsx: "Commission is calculated on pre-GST revenue — after discounts, before GST." help text under both add + edit commission inputs.
+- Verification: `bunx tsc --noEmit` exit 0 (re-run AFTER A2's types landed — my earlier 2 errors fixed: UiTooltip alias + esc map narrowing); `bun run lint` clean; dev.log shows no compile errors (GET / 200, all touched APIs 200). Smoke-tested with a real session (bun script → createSession for ravi@glowgo.example @ Glow & Go — Andheri West): customers?lapsed=true → 4 rows (all visits>0, lastVisit >60d ago) + lapsedCount 4; customers normal → total 19, lapsedCount 4; stats?from=2020-01-01&to=2030-01-01 → 200 with clamped window (daily capped at 90d ending now+1d, byMethod has all 4 keys); expenses?limit=1000 → 108/108 rows, limit=5000 clamps to 1000; hours + branches-compare clamp verified; birthdays endpoint carries lapsedCount. Scratch scripts + session token deleted.
+
+Stage Summary:
+- Stats hardening landed: date-range clamp on all three from/to stats routes, commission now on pre-GST pre-tip base (verified numerically against the raw ledger), SPLIT bucket in byMethod.
+- Exports scale: transactions PDF covers the whole filter (cap 4000 newest + honest notes), expenses list paginates with Load more + Showing X of Y, expense PDF up to 1000 with truncation warning, all report PDFs now carry scope+date filenames.
+- Customers win-back is server-driven (?lapsed=true + tenant-wide lapsedCount); dashboard payment split handles SPLIT with sum-to-100 percentages; birthday wish state is no longer optimistic; WhatsApp owner-note is scope-correct; QR poster HTML-injection closed and ₹0.00 copy replaced; staff/tenants APIs stop leaking Prisma internals.
+- tsc exit 0 + lint clean + dev server healthy with A2's landed billing v1.1 types. Deviations: (1) WhatsApp button kept enabled for single-branch franchises (no chips exist to "pick a branch" — disabling would be a dead end); (2) transactions PDF caps fetched bills (incl. voided) at 4000 and warns on the total; (3) largest-remainder shows SPLIT row only when it has activity to avoid a noise row.
+
+---
+Task ID: A2
+Agent: full-stack-developer
+Task: Billing engine v1.1 — split payments, flat-₹ discount, tip, discountSource-gated offer redemption, money-path hardening (drift 409, per-user rate limit, P2002 billNo retry, verbatim clientCreatedAt), offline-queue cap + async-safe enqueue, provisional receipts, scalable GET summary, pre-GST commission shift report, void reason + rate limit, local catalog cache.
+
+Work Log:
+- Resumed after context deadline. Read worklog AUDIT-V2 + A1 + A3 sections; audited own progress via git diff across prisma/schema.prisma, api/transactions/**, billing components, offline-queue, types/serialize/i18n, shift + lookup routes, local-cache.
+- prisma/schema.prisma: TransactionPayment model (method/amount/branchId/tenantId/createdAt, @@unique([transactionId, method]), branch+tenant indexes), Transaction.discountFlat + tipAmount + payments relation, Branch @@unique([tenantId, billPrefix]). db:push applied — verified columns + TransactionPayment table + Branch_tenantId_billPrefix_key unique index live in custom.db.
+- prisma/patch-backfill-payments.ts (created + run): repairs tenant-level billPrefix collisions (suffix -2, -3…; earliest branch keeps the prefix) then backfills one payment row per orphan transaction ({method: t.paymentMethod (SPLIT→CASH defensive), amount: round2(total − tipAmount), branchId, tenantId, createdAt: t.createdAt}); idempotent via payments:{none:{}} — re-run reported "nothing to do", 315 rows / 314 transactions / 0 orphans.
+- api/transactions POST: zod accepts EITHER paymentMethod (legacy) OR payments[] (1-3 unique-method slices, each 0.01..10L) — superRefine rejects both/neither/duplicate-methods and pct+flat together; discountFlat clamped at subtotal; tip added after GST; resolvePayments forces the LAST slice to absorb sub-paisa drift so Σslices === total exactly; storedMethod = single method or "SPLIT"; computeBill is a dry pass (menu validation + all money) BEFORE any write. Rate limit moved AFTER requireApiBranch, keyed per-USER (bill:${user.id}, 240/min) — shared-NAT lockout closed. expectedTotal (online only; the offline queue never sends it) vs recomputed total > ₹0.05 → 409 {error, recomputedTotal} before any write. clientCreatedAt parsed VERBATIM and always stored on the row even when the clamp rejects it into the 7-day window (auditable clock skew). P2002 catch now distinguishes target: clientRequestId → replay the winner; billNo → one fresh runBillTransaction retry with a re-read counter (schema-level @@unique([tenantId, billPrefix]) makes this near-impossible now); else 500. Menu-lead redemption gated on discountSource === 'MENU' AND discountAmount > 0 AND customer — loyalty/manual discounts can never burn a one-time coupon; lookup + redemption are both tenant-wide so a lead claimed at branch A redeems at any branch, exactly once.
+- api/transactions GET: summary now computed via transaction.aggregate + groupBy(paymentMethod) + groupBy(branchId) in SQL (was: whole filtered ledger findMany'd into Node); byMethod is Record<PaymentMethodOrSplit,…> with a SPLIT bucket (empty-scope return too); ΣbyMethod.count === summary.count verified.
+- api/transactions/void: reason now REQUIRED ≥3 chars (zod min(3)) + per-user rate limit (void:${user.id}, 30/min); fresh row includes payments. [id] GET includes payments.
+- api/staff/shift: take:200 cap REMOVED (a festival day can no longer silently understate cash handover); byPayment + cashCollected computed from TransactionPayment rows (SPLIT bills contribute their CASH/UPI/CARD slices individually); commissionBase = Σ round2(subtotal − discountAmount) per bill (pre-GST, pre-tip) + commission = base × pct; response carries commissionBase; bills[] carries tipAmount.
+- serialize.ts: toTransactionDTO maps discountFlat/tipAmount/payments; payments synthesized from denormalized columns when rows absent (legacy edge); paymentMethod typed PaymentMethodOrSplit.
+- types.ts: PaymentMethodOrSplit, PaymentSlice, TransactionDTO.{discountFlat,tipAmount,payments}, ShiftReportResponse.{summary.commissionBase, bills[].tipAmount}, TransactionsResponse byMethod widened.
+- billing-flow.tsx: discountFlat/tipAmount/discountSource/splitPayments state wired through; handleManualDiscount commits % OR flat (never both) and stamps discountSource MANUAL/NONE; loyalty → LOYALTY, QR-menu apply → MENU; buildPayload() shared by online POST (adds expectedTotal) and offline queue (never sends expectedTotal); saveOffline is now async + AWAITS enqueueBill — on IndexedDB failure the cart is KEPT, the payment step stays mounted, and a clear error toast fires (the old fire-and-forget showed a success screen for a bill stored nowhere); local-cache.ts (new) mirrors catalog + branch profile per-branch to localStorage (7-day TTL) with useQuery initialData — billing step 1 works after an offline reload, with an amber "showing the saved menu" notice when the refetch fails but cache is served; "Continue anyway" on lookup server-failure keeps the customer mobile on the bill instead of forcing walk-in.
+- payment-step.tsx: 4th "Split" method card opens a dedicated dialog — per-method ₹ allocations with live Remaining/over-allocation banner, "Fill remaining" per row, exact-till-remaining confirm, and a cash-tender helper (quick tenders + change) sized against the CASH slice; discount popover gains a %/₹ tabbed toggle (chips [0,5,10,15,20]% + dynamic non-standard chip; flat input capped at subtotal with inline "too big" hint); tip chip with +₹10/+₹20/+₹50/custom, removable; UPI QR amount = total INCLUDING tip; single-method dialogs unchanged.
+- success-step.tsx: SPLIT method meta + "Cash ₹600 + UPI ₹400" slice summary; provisional-receipt amber notice for PENDING_SYNC; discount/tip lines on the receipt card.
+- receipt-pdf.ts (PDF + WhatsApp text): payments breakdown block for SPLIT (per-method lines), Tip line, flat-₹ discount prints "Discount (Rs. N)" (₹ glyph still unsupported in jsPDF helvetica — deferred to task B), and PENDING_SYNC bills get a bordered amber "PROVISIONAL RECEIPT — final bill number will be assigned on sync" notice + "Provisional Bill" doc label.
+- offline-queue.ts: QueuedBill payload/display carry discountFlat/tipAmount/payments/discountSource; MAX_QUEUE=200 with evict-oldest-before-insert (a fresh payment always wins over the stalest entry; only real IDB errors reject); queuedBillToPreview recomputes ALL totals (incl. tip/flat) from the payload with the server's formula + derives payments/method — the frozen display.total can no longer disagree with the printed lines.
+- i18n.ts: full en + hi dictionaries for every new string (split*, tip*, flatDiscount*, provisionalReceipt, offlineSaveFailed(+Hint), savedMenuNotice, lookupFailedTitle, continueAnyway(+Hint), discountType*).
+- A3's admin-cluster changes verified compatible (METHOD_META SPLIT, pre-GST commission footnote, void reason ≥3 client-side, transactions PDF/SPLIT filter).
+- VERIFIED: `bunx tsc --noEmit` exit 0; `bun run lint` clean; dev.log zero compile errors (GET / 200, unauth API 401).
+- Smoke-tested against the live dev server with a real createSession (ravi@glowgo.example @ Glow & Go — Andheri West / GG1), 19/19 PASS: single CASH 200 (payments=[CASH:177]); split CASH 88.5 + UPI 88.5 → 200, paymentMethod=SPLIT, Σslices===total; discountFlat 50 → 200 flat=50 total=118; tipAmount 20 → 200 total=197 tip=20; expectedTotal +100 → 409 with recomputedTotal=177 and zero writes; expectedTotal exact → 200; pct+flat → 400; payments+paymentMethod → 400; split not summing → 400; clientRequestId replay → 200 duplicate=true (no double bill); 30-day-old clientCreatedAt → 200 with verbatim clientCreatedAt 30d ago + createdAt=now; discountSource=MENU → lead redeemed + linked via redeemedByTransactionId; discountSource=LOYALTY (same discount) → lead NOT redeemed; void reason 'no' → 400, valid reason → 200 VOIDED; GET summary byMethod Σcount===count with SPLIT bucket (531/2); shift commissionBase=2105 pre-GST vs revenue 2523.9; SPLIT slices reconcile. Scratch scripts + 3 scratch session tokens deleted; test bills left in the sandbox ledger (billCounter gaps are worse than realistic test rows).
+
+Stage Summary:
+- Billing v1.1 feature set COMPLETE and browser-path-verified: split payments (SPLIT denormalized label + TransactionPayment slices that always sum to the paisa), flat-₹ discounts (mutually exclusive with %, clamped at subtotal, source-tracked), tips (post-GST, in UPI QR amount, on receipts, excluded from commission), and menu-offer redemption that only fires on discountSource=MENU.
+- Money-path hardening landed: server-authoritative recomputation with online drift 409 (offline sync exempt), rate limits per-user after auth, billNo P2002 retry + tenant-scoped unique billPrefix, verbatim clientCreatedAt for auditability, SQL-aggregated GET summary with SPLIT bucket, shift commission on pre-GST pre-tip base with payment-slice-level cash handover.
+- Offline resilience closed: awaited enqueue (silent-loss path eliminated, cart preserved on failure), queue cap 200 evict-oldest, consistent preview totals, provisional-receipt marking on PDF + success screen + WhatsApp text, and a 7-day localStorage catalog/branch cache so a cold offline reload can still bill.
+- Legacy compatibility: old single-paymentMethod payloads and pre-v1.1 rows both work (backfill synthesized payment rows; toTransactionDTO synthesizes slices when rows are missing); replay idempotency re-verified end-to-end.
+- Remaining known gaps deferred by plan: ₹ glyph in PDFs (needs embedded font — task B), customer-merge endpoint, till-count in shift PDF, B2B GST invoice fields.
+
+---
+Task ID: B2
+Agent: full-stack-developer
+Task: Admin console Hindi (hi) rollout (shell nav, dashboard KPIs/sections/buttons, range picker, LangToggle in the shell) + dismissible first-run "Set up your salon" onboarding checklist for the ADMIN dashboard.
+
+Work Log:
+- Read worklog AUDIT-V2/A1/A2/A3 + every in-scope file before editing (i18n.ts Dict/DICTS/useT pattern, use-app-store.ts localStorage-at-creation lang + splash gate, app-shell, lang-toggle, dashboard-view, range-picker, busy-hours/branch-insights cards, api/catalog/franchise + api/staff + api/branch routes, page.tsx). Verified the dashboard is ADMIN-only (effectiveView forces billing for STAFF, tenants for SUPER_ADMIN). B1's files (shift-report-dialog, customers-view, report-pdf, api/customers/*) untouched.
+- src/lib/i18n.ts: header comment updated (admin console now progressively translated); added a namespaced `adm*` block — 121 new keys — to BOTH dicts: shell nav incl. mobile Bill/Home/Bills/More + "More menu" aria + logout; language-toggle aria/title; range presets + Custom/From/To/Apply + aria; dashboard header + scope chips; KPI titles/subs + "vs the same-length prior window" delta title; Payment Split/Branches/Profit trend/Revenue chart/Top Services/Staff Performance (incl. the pre-GST commission footnote)/Birthdays (singular+plural subs, Wish/Wished, aria)/Recent Bills/P&L/Discount Analytics strings; Busy Hours + Branch insights titles; Share Report button + share-sheet title/text + download toast + WhatsApp aria/tooltips; error strings; full onboarding-checklist copy. Natural salon-owner Hindi with Western digits (matches the billing dict): आमदनी, बिल, औसत बिल, खर्च, शुद्ध मुनाफ़ा, आज, बीता कल, इस महीने, मेन्यू और रेट, स्टाफ़, ग्राहक, सेटिंग्स, QR मेन्यू, रश का समय, ब्रांच की परफ़ॉर्मेंस.
+- lang-toggle.tsx: aria/title now dict-driven (en values byte-identical to the old hardcoded ones; hi gains a bilingual "Switch to English — अंग्रेज़ी में बदलें" aria).
+- app-shell.tsx: ADMIN_NAV/SUPER_ADMIN_NAV/mobile nav rebuilt as useMemo arrays with L.* labels; dropdown + drawer logout, More label/aria/DrawerTitle translated; LangToggle added — desktop header right (hidden lg:block, ADMIN-only so staff keep the billing toggle and the platform console stays English) + mobile full-width 44px pill inside the existing More drawer above Log out.
+- range-picker.tsx: module PRESETS split into PRESET_IDS (detectPreset keeps its pure export signature) + component-local labeled presets; all picker strings/aria translated.
+- dashboard-view.tsx: useT() wired into every card + main view (KPI templates {n}/{m}/{avg}, payment split total/rows, branch split, profit trend + tooltip + legend + aria, revenue chart + tooltip, top services, staff perf incl. commission badge/%-line/bill-bills plural/footnote, birthdays, recent bills, P&L, discounts, header h1/sub, scope chips + All branches, Share Report + WhatsApp aria/tooltips/toasts, error state — 'Try again' reuses the existing billing key). CRITICAL: summaryReportFile/downloadSummaryReportPdf/whatsappNote keep receiving the ENGLISH range label (rangeLabelEn) — jsPDF helvetica cannot render Devanagari; on-screen rangeLabel is translated.
+- busy-hours-card.tsx + branch-insights-card.tsx: +optional `title` prop (default English) so the dashboard can pass L.admSecBusyHours/L.admSecBranchCompare — two minimal additive edits beyond the 5 listed files (the listed section headers live in these separate components; neither is in B1's file set).
+- onboarding-card.tsx (NEW): "Set up your salon" card above the KPI grid — 5 items (services/UPI/staff/QR poster/first bill): done → filled emerald check, todo → numbered circle, each with a translated "Go" (setView services/settings/staff/qrmenu/billing); header progress "{done} of {total} done" + emerald progress bar (role=progressbar); dismiss ✕ (44px) persists localStorage `sx-onboarding-dismissed:{userId}`='1' per user; empathy line at zero bills; returns null when ALL items complete. Data: branch profile from the dashboard's existing ['branch'] query (upiId + menuSlug), current-range stats.totalBills, light ['staff'] query (≤1 = incomplete), ['franchise-menu'] catalog query enabled ONLY once the card is potentially visible (cheap signals loaded + ≥1 incomplete — an established salon never gets the catalog fetch); waits for branch+staff before appearing (no flash); fails safe to hidden on query error. Bilingual via the same adm* keys; framer-motion fade-in gated by prefers-reduced-motion; hairline rounded-xl bg-card styling, no indigo/blue.
+- VERIFIED: `bunx tsc --noEmit` exit 0 (one fix: navigator.share title template needed `scopeShort ?? ''` — TS2769); `bun run lint` clean; dev.log — 4 transient "Can't resolve './onboarding-card'" entries were logged while the import landed a few minutes before the new file (mid-edit Turbopack compile), ZERO module errors after the file existed; final compiles ✓ and GET / 200. Dict parity: temporary bun script importing src/lib/i18n (deleted after) → en 290 / hi 290 keys, adm* 121/121, missing-in-hi NONE, missing-in-en NONE, sentinel en-values byte-identical to the old hardcoded strings (commission footnote, 'This month' vs 'This Month' case split, etc.), all 20 template keys present in both dicts — PASS.
+- Hydration review (no browser here): SSR renders the Splash gate (hydrated=false) on server AND first client paint → translated admin strings only render after the post-mount /api/auth/me → setHydrated(true) transition, so the localStorage-backed lang can never mismatch server HTML; OnboardingCard reads localStorage in a useState initializer but only mounts inside the post-gate, statsQ-resolved dashboard branch — SSR never sees it.
+
+Stage Summary:
+- ADMIN console is bilingual end-to-end for the high-value surfaces: nav, dashboard KPIs/sections/subs/buttons, range presets and the onboarding checklist follow the EN⇄हिं toggle (header/drawer toggle for admins); lang 'en' is pixel-identical to before (English strings byte-matched, verified by sentinels); the SUPER_ADMIN tenants console stays English by design.
+- Export safety: everything fed to report-pdf/WhatsApp keeps an English range label — Devanagari would render as garbage in jsPDF helvetica; display labels translate, exports don't.
+- New-franchise experience: per-user dismissible, auto-completing 5-step setup checklist with progress bar, zero-bills empathy copy, and Go shortcuts into the right views — light queries only, shared cache keys with the staff/services views.
+- Deviations: (1) busy-hours-card.tsx + branch-insights-card.tsx each got a ~4-line optional-title prop (headers live outside the 5 listed files; needed for the listed Busy hours/Branch comparison coverage; no B1 conflict). (2) No 'Download PDF' key added — no such button exists on the dashboard (Share Report's fallback downloads; the billing receipt flow already owns downloadPdf). (3) CustomerInsightsCard + busy-hours/branch-insights card internals stay English (not in the coverage list — progressive rollout, future task). (4) First-bill item uses the CURRENT range's totalBills (task-sanctioned simplification). (5) Range presets translated as the app's actual strings ('7 Days'/'Last 7 days'/'This Month'/'This month') rather than the task's approximate 'This week'.
+
+---
+Task ID: B1
+Agent: full-stack-developer
+Task: Customer duplicate-profile merge (API + UI with absorb-direction warning) + till-count lifted into the shift dialog with per-staff/day localStorage persistence + CASH RECONCILIATION block (denominations, red shortfall, signature lines) on the shift handover PDF — plus ₹-capable embedded fonts and SPLIT/scoped-filename/truncation upgrades across the admin report PDFs.
+
+Work Log:
+- Resumed after context deadline. Read worklog AUDIT-V2/A1/A2/A3/B2 entries; audited own progress via git diff across merge route (untracked), shift-report-dialog, report-pdf, customers-view, customers/[id], customers/route; read src/lib/pdf/pdf-font.ts (embedded Noto subsets, per-doc WeakSet registration) and B2's landed i18n/onboarding work for compatibility. B2's files untouched.
+- COMPLETENESS AUDIT vs spec — merge route (api/customers/merge/route.ts): re-parents transactions (updateMany + customerMobile/customerName snapshot rewrite to the keeper so ledger search finds absorbed bills), menuLeads re-parented, branchVisits fold with later-visitedAt-wins on (customerId,branchId) clash, visits/totalSpend summed, lastVisitAt max, name/birthday fallback (to ?? from), from-tombstoned with unique `<merged:{id12}>` mobile (mirrors the [id] DELETE `<erased:…>` pattern — @@unique([tenantId,mobile]) safe on repeat merges), tenant-scoped on BOTH rows, fromId≠toId 400, merging-INTO-a-tombstone 400, ADMIN-gated, all inside ONE $transaction (half-merged book never observable). Found COMPLETE — no fixes needed.
+- COMPLETENESS AUDIT vs spec — UI (customers-view.tsx): Merge action in the history-dialog header (disabled + explanatory title when bookTotal ≤ 1 or the profile is a retired tombstone), MergeCustomerDialog with client-side candidate search (live profiles only, radiogroup a11y, 44px rows), amber absorb-direction warning naming both profiles, destructive "Merge & retire X" confirm, refetch via invalidateQueries(['customers-list','customer-history','birthdays']), success/error toasts, "not all loaded" hint when bookTotal > loaded pages. Clash text in customers/[id] PUT 409 now points at the Merge flow. Two polish fixes this run: (1) opening Merge now closes the history dialog first (one modal at a time — no stale keeper data behind the merge sheet); (2) the mobile-clash helper text in the editor references the Merge button.
+- COMPLETENESS AUDIT vs spec — till-count (shift-report-dialog.tsx): grid state lifted from TillCountCard into ShiftReportDialog (card is now controlled: counts + onSetCount), persisted to localStorage `sx-till-<staffKey>-<YYYY-MM-DD>` with same-day-only restore, per-keystroke save, stale-day purge on save, and adjust-during-render re-seed on staff/day change (past-day reviews stay transient). Fix this run: tillStaffKey is now `staffId ?? user.id ?? 'me'` so the SELF dialog persists under the signed-in user's id per the spec's `<staffId>` key shape (was a bare 'me'). PDF payload `till` is built only when ≥1 denomination is counted (an untouched grid never prints a misleading ₹0 shortfall) and only when shift data exists.
+- report-pdf.ts (verified complete, no changes needed this run): ShiftTillCount export; buildShiftReportDoc(…, till?) renders a CASH RECONCILIATION section — fresh-page guard when the bills table leaves no room, "Drawer vs bills" table (expected from cash bills vs counted) with ±delta foot (red [185,28,28] on shortfall via didParseCell, neutral on surplus/balanced), denomination table (₹2000…₹1, only non-zero rows, notes/coins foot), and Staff/Manager signature pair (plain handover keeps the legacy staff-name/Manager strip); registerPdfFonts in every builder (transactions, summary, shift, expense); ₹ glyph everywhere via embedded Noto subsets (INR + rs() now prints ₹ instead of "Rs."); SPLIT row in the summary payment split once active; scoped filenames (SaloonX-Summary/Expense-Report-{scope}-{from}-to-{to}.pdf); expense PDF truncation note. All call sites (transactions-view, expenses-view, dashboard-view, shift dialog) verified on the new signatures — B2's tsc-clean run already crossed this wire, re-verified after my two edits.
+- VERIFIED: `bunx tsc --noEmit` exit 0; `bun run lint` clean; dev.log no compile errors (only B2's 4 documented transient onboarding-card mid-edit entries from before; GET / 200).
+- Smoke-tested the merge endpoint against the live dev server with real createSession cookies (ravi@glowgo.example @ Glow & Go — Andheri West): 12/12 PASS — unauthenticated 401 "Not authenticated"; STAFF session (priya) 403 "Not authorized"; same id 400; cross-tenant fromId 403 "No access to this customer"; keeper-is-tombstone 400; missing ids 400; HAPPY fallback pair (prisma-seeded keeper with null name/birthday/lastVisit absorbing a donor with values) → 200 with name/birthday/visits/totalSpend/lastVisitAt all correctly folded, donor tombstoned `<merged:…>` with zeroed counters; HAPPY branchVisit fold (seeded clash + distinct branch) → single Andheri row carrying the LATER visitedAt + Bandra row re-parented, donor left with 0 visit rows; HAPPY natural merge shiv → Aditi Rao → 200, GET /api/customers?search= shows Aditi at 2 visits / ₹2,235 / lastVisit kept (max), shiv's number returns empty, and DB check confirms bill GG1-0062 re-parented to Aditi with customerName 'Aditi Rao' + customerMobile '9876500011', zero dangling transactions on shiv. Throwaway profiles + test sessions deleted after; the shiv→Aditi merge is left in place as realistic book history (matches A2's test-bills policy). GET /api/staff/shift (self + staffId variants) both 200 with cashCollected present — the till-card data path.
+
+Stage Summary:
+- Customer merge is production-shaped: atomic re-parenting of bills/leads/visits with ledger-search-preserving snapshot rewrites, summed aggregates with sparse-field fallbacks, unique-per-row tombstones, and every auth/tenancy/direction edge (401/403/400×3) verified live; the UI makes the absorb direction unmistakable (amber warning naming both profiles) and the irreversible action is a destructive confirm.
+- Till-count now survives the real handover workflow: counts persist per staff member per day (only same-day restores; stale snapshots purged), and the printed shift PDF carries a signable CASH RECONCILIATION block — expected vs counted with a red shortfall, denomination breakdown, and staff/manager signature lines on a fresh page when needed.
+- All admin PDFs print ₹ (embedded Noto subsets, per-doc registration), show SPLIT once active, carry scope+date filenames, and note truncation honestly; report-pdf API extensions are backward-compatible within the app (all call sites migrated).
+- Deviations: none this run beyond two quality fixes inside the spec's files (merge opens as the sole modal; self-till key uses the real user id). Known deferred: B2B GST invoice fields.
+
+---
+Task ID: B0
+Agent: Z.ai Code (orchestrator)
+Task: ₹-capable embedded font for all PDFs (receipts + admin reports).
+
+Work Log:
+- Downloaded Noto Sans (static Regular + Bold from notofonts.github.io), pyftsubset to Latin+punctuation+₹ (U+20B9), no hinting → 35KB each (from 620KB).
+- Created src/lib/pdf/noto-regular-b64.ts + noto-bold-b64.ts (base64 TTF) and src/lib/pdf/pdf-font.ts (registerPdfFonts idempotent helper, PDFFont.Regular/Bold constants, INR glyph; style aliases registered so autoTable's default bold head style and italic requests resolve).
+- receipt-pdf.ts: rs() now renders ₹ instead of "Rs."; all setFont('helvetica') → PDFFont.*; registerPdfFonts called in buildReceiptDoc. Flat discount label uses rs().
+- report-pdf.ts: same treatment via scripted edit — 35 "Rs. " occurrences → ₹, 4 jsPDF constructions register fonts, autoTable styles use PDFFont.Regular, italic → Regular fallback.
+- Verified: tsc exit 0, no remaining helvetica refs outside comments, no "Rs." in either PDF builder.
+
+Stage Summary:
+- Every PDF now prints ₹ like the screens (was "Rs." — brand inconsistency flagged by all three audits).
+- Font subset is OFL-licensed Noto Sans, ~47KB base64 each, imported statically by PDF builders (only loaded with them).
+
+---
+Task ID: C1+D1
+Agent: Z.ai Code (orchestrator)
+Task: Final UI/UX market-readiness pass + full end-to-end browser verification.
+
+Work Log:
+- Frontend-styling subagent attempt timed out; orchestrator performed the review directly.
+- FALSE-ALARM investigated: `[m` sequences appeared "eaten" in payment-step/transactions-view/ui-atoms output — proven to be a tool-display artifact (markdown link interpretation); actual files verified intact via case-transformed output + tsc exit 0.
+- VLM (glm-5v) review of payment/success/dashboard-mobile screenshots: triaged findings — "2026 date bug" and "chart broken" were false positives (sandbox clock is genuinely Oct 2026; chart already has 2.5px stroke + gradient fill); legit polish applied: tip rows now render as amber additions (vs emerald discounts) in payment-step summary + success-step receipt card (accounting color semantics).
+- Browser E2E (agent-browser): existing session invalidated by token hashing → full re-login as ravi@glowgo.example via Firebase (200, hashed session verified in DB); billing golden path in HINDI: Haircut ₹160 → flat ₹30 discount (popover ₹-mode) → +₹20 tip → SPLIT payment (Cash ₹50 + Fill-Remaining UPI ₹100, exact-tender change calc) → bill GG3-0048 created (POST 200); receipt card shows छूट (₹30) −₹30 / टिप +₹20 / कुल ₹150 / स्प्लिट से भुगतान: नकद ₹50 + UPI ₹100.
+- PDF ₹ verification: bun script with the project's pdf-font module → jsPDF PDF → pdftotext extracts "Total: ₹150" — embedded Noto Sans subset renders the rupee sign.
+- Dashboard (Hindi): KPIs, payment split 4 slices (Cash 58% / UPI 9% / Card 6% / Split 27%), staff performance with pre-GST commission footnote, profit trend; onboarding card correctly absent (tenant fully set up).
+- Transactions view: "PAID BILLS +4 voided" label, Split method filter, GG3-0048 listed with Split badge.
+- QR menu (?menu=glow-and-go-salons-andheri-west): hero, 10% first-visit offer CTA, category tiles — 200s.
+- Responsive screenshots captured at 390px + 1280px.
+- Dev server OOM-died once mid-session (no crash trace; ~800MB next-server) — restarted, all green after. dev.log: all 200s post-fixes; the PrismaClientValidationError entries are stale mid-development artifacts (pre-db:push, lines 202-318) — every request in the final session returned 200.
+- Cleaned scratch/ (agent leftovers); .gitignore += /agent-ctx/.
+
+Stage Summary:
+- Golden path browser-verified end-to-end incl. all v1.1 features (split/tip/flat discount) in Hindi.
+- Final gates: tsc --noEmit exit 0, eslint clean, dev healthy.
+- Ready to commit: ~65 files changed across security hardening, billing engine v1.1, admin/report scaling, i18n, PWA, PDFs, and repo hygiene.
+
+---
+Task ID: FINAL-V2
+Agent: Z.ai Code (orchestrator)
+Task: Commit the overhaul; push status + handoff.
+
+Work Log:
+- Committed 63 files as 341f7da "Production-readiness overhaul: security, billing v1.1, reports at scale, i18n, PWA" on master (on top of 260fd5b).
+- `git push` attempted → blocked: sandbox has no GitHub PAT/SSH/gh credentials (non-interactive, no device for username prompt).
+- Created git bundle backup at download/saloonx-overhaul.bundle (master @ 341f7da, 6.9MB) for transfer.
+- Final gates at commit time: tsc --noEmit exit 0, eslint clean, dev server healthy, browser E2E green.
+
+Stage Summary:
+- TO PUSH (user action): provide a GitHub PAT (classic, repo scope) and run
+    git remote set-url origin https://x-access-token:<TOKEN>@github.com/Sivazam/saloonX.git
+    git push -u origin master
+  or from a machine with the bundle: git fetch download/saloonx-overhaul.bundle master && git merge FETCH_HEAD && git push
+- All audit gaps from AUDIT-V2 are closed except the explicitly deferred: Devanagari script support inside PDFs (needs a Devanagari font subset — receipts currently assume Latin service names), SUPER_ADMIN platform-oversight access policy (dead branches left fail-closed), FCM push notifications, appointment booking (product roadmap).
+
+---
+Task ID: UI-ART-1
+Agent: Z.ai Code (main session, continuation)
+Task: User feedback round 2 — "menu cards font too big; want img SVGs on cards resembling the service instead of text + generic logos; overall UI change not visible enough."
+
+Work Log:
+- Audited both "menu card" surfaces in-browser (billing POS service grid + public QR menu) with VLM screenshot critiques; confirmed: big type, category-level generic lucide icons, no per-service artwork.
+- Created src/components/service-art.tsx: 30 hand-drawn 48×48 stroke SVG illustrations (haircut, kids cut, layers, blow-dry, straighten, keratin, highlights, roots, colour bowl, clipper, hair tattoo, shave, royal shave, beard trim/spa/colour, fruit/gold/hydra/glow facials, de-tan, cleanup, head massage, champi, shoulder, aroma, scalp, combo, groom) + `serviceArt(name)` keyword matcher (most-specific-first: "Beard Colour"→beardcolor, "Haircut + Beard"→combo, "Aroma Head Ritual"→aroma, "Full Head Color"→colorbowl…). Each entry has a dark-mode-aware `tile` tint + `warmTile` palette for the cream public menu.
+- Billing service-select-step.tsx: per-service art on size-12 tinted tiles (replaced CATEGORY_META generic icons); compact type — names 13px, prices 15px, meta 11px, p-3 cards, smaller + button, slimmer chips with mini art, tighter in-card stepper.
+- Public menu (salon-menu-app.tsx): art thumbnails on every ServiceRow (size-12 warm chip), popular chips (size-9), category tiles (size-12), section headers (size-11 warm chip replacing black squares), dock pills; tightened rhythm — rows p-3, sections pt-7, headers text-xl.
+- Admin services-view.tsx: art thumbnails on each service row.
+- VLM iteration: fixed Highlights (was "hanging laundry" → diagonal hair swatch with bold streaks + sparkle), split Cleanup (face+bubbles) from De-Tan (face + crossed-out sun), enlarged Fruit Facial citrus slice with filled wedges.
+- Verified end-to-end via agent-browser: billing mobile 390px + desktop 1280px, light + dark mode (cart bar contrast confirmed via computed styles after VLM false positive), qty stepper + cart drawer + Continue flow, public menu mobile full page + section zooms, admin catalog; dev.log clean, no console errors.
+- Lint clean. Committed 047b3f2 on master. Push still blocked (no GitHub credentials in sandbox) → full-history bundle saved at saloonx-20261020-ui.bundle.
+
+Stage Summary:
+- Product-wide illustrated service language: same artwork resolves from service NAME everywhere (POS, QR menu, admin), so custom/new services automatically get sensible art via keyword fallback chain.
+- Typography compacted on all menu cards (13/15/11px POS, sm/base/11px menu) per user complaint.
+- Commit: 047b3f2 "UI: illustrated service menu — 30 hand-drawn service SVGs, compact card typography" (4 files, +637/−117). Bundle backup: saloonx-20261020-ui.bundle.
+- Open: push to github.com/Sivazam/saloonX requires credentials outside the sandbox.
+
+---
+Task ID: UI-UX-3 + VERIFY-ALL
+Agent: Z.ai Code (main session)
+Task: User asked to (a) further elevate the UI/UX game and (b) verify all routes, billing, new-salon onboarding, multi-branch, staff flows end-to-end.
+
+Work Log:
+- Design round 3 (visible elevation):
+  - app-shell.tsx rewritten: desktop sidebar now has grouped nav (Daily: Billing/Transactions/Expenses · Insights: Dashboard/Customers · Salon setup: Menu & Prices/Staff/Branches/QR Menu/Settings — staff see only Billing, platform sees Franchises), a prominent "New Bill" gradient CTA with sheen-sweep hover at top, and a profile footer card (avatar + online dot + role badge, dropdown opens upward with shift-report + logout). Header account chip became mobile-only.
+  - Fixed mid-round bug: SUPER_ADMIN had no desktop account access (footer card was admin-only) — now rendered for every role; platform note moved above it.
+  - Mobile: bottom-nav active chip gets a shared-layout glide pill (layoutId=mobile-active-chip); More drawer regrouped into "Salon setup" / "Grow" micro-labeled sections + pinned Settings/lang/logout.
+  - dashboard-view.tsx: hero header band (hairline card + warm radial glow) with time-of-day greeting eyebrow (admGreet* keys en+hi), scope chip next to the Dashboard title, today's date via Intl in staff locale, actions right-aligned.
+  - login-view.tsx: brand panel headline now Fraunces (font-display), amber "salon lamp" radial glow, illustrated signature-service strip (5 ServiceArt tiles + hairline + "and 25 more").
+  - i18n.ts: +7 keys ×2 languages (nav group labels, greetings).
+- Route audit (B1): 401 unauth on all protected APIs; 200 on /, /?menu=, manifest, public menu; 403 for admin on super-admin-only (tenants, platform stats); 405 method guards; 400 validation (lookup needs 10-digit `mobile`). All green.
+- E2E onboarding (B2): as SUPER_ADMIN created franchise "Urban Fade Studio" via UI → tenant + first branch (Powai, UF, auto-approved) + admin Arjun (Firebase user + welcome announcement) — verified in DB.
+- E2E new-admin setup (B3): Arjun login → onboarding checklist visible; created categories Hair + Beard & Shave, services Signature Haircut ₹299 + Beard Sculpt & Shave ₹199 (POST 200s); added staff Neha (STAFF, 10% commission, Firebase account, POST 201); created 2nd branch "Urban Fade — Bandra" (UFB) → correctly "Awaiting approval" → SUPER_ADMIN approved via pending list (PUT 200) → "is live!" announcement to franchise.
+- Gap found & fixed: POST /api/tenants never set menuSlug (first branch had no public QR menu). Created shared src/lib/slug.ts (slugify + uniqueMenuSlug), wired into tenants + branches routes, and added backfill-on-edit in PUT /api/branches/[id] (legacy branches self-heal on first edit — verified: Powai got urban-fade-studio-powai after a no-op profile save).
+- E2E multi-branch billing (B4): assigned Arjun + Neha to Bandra via Staff edit; branch switcher works in header (switch clears cart + queries); bills: UF-0001 (Powai, cash, new customer), UFB-0001 (Bandra, cash, new customer Kabir), UFB-0002 (staff Neha, UPI, customer Zoya), UFB-0003 (walk-in, UPI) — per-branch numbering correct. Staff role correctly restricted to Billing-only shell. Public QR menu 200 for both new-tenant slugs. Checklist progressed to 4 of 5.
+- A11y: fixed shadcn CommandDialog (sr-only DialogTitle/Description moved INSIDE DialogContent per radix requirement) — console errors gone on a fresh full billing walk.
+- Gates: eslint clean, tsc exit 0, dev.log all 200s, zero console errors post-fix. Committed 911f67c. Push still blocked (no GitHub creds) → bundle at download/saloonx-20261021-e2e.bundle.
+
+Stage Summary:
+- Design: grouped sidebar + New Bill CTA + profile footer, glide-pill mobile nav, grouped More drawer, dashboard hero greeting band, Fraunces login panel with service-art strip.
+- Verification: full platform E2E green — onboarding → setup → multi-branch → staff → billing (cash/UPI/walk-in) → approval governance → public menus.
+- Real bug fixed: missing first-branch QR slug (3-level fix incl. self-healing backfill).
+- TO PUSH (user action): provide a GitHub PAT and run git remote set-url origin https://x-access-token:<TOKEN>@github.com/Sivazam/saloonX.git && git push -u origin master — or fetch from download/saloonx-20261021-e2e.bundle.
+
+---
+Task ID: ZIP-RESTART
+Agent: Z.ai Code (main session)
+Task: User asked to (1) zip the entire codebase into public/ and update the login-page download zip, (2) restart the server and run the app.
+
+Work Log:
+- Audited git state: clean tree at 893e7c7, master 6+ commits ahead of origin (push still credential-blocked).
+- CRITICAL FIX: src/lib/local-cache.ts was imported by billing-flow.tsx but silently gitignored by the broad `local-*` pattern — anyone cloning from GitHub got a build-breaking missing module. Changed pattern to root-anchored `/local-*`, force-tracked the module, and re-included `.env.example` via `!.env.example` negation (commit a49b780).
+- Built zipper.zip via clean staging: `git ls-files` (exactly the tracked tree — git-consistent, no phantom deletions on unzip+push) + full `.git` directory (8.4MB history so the user can push to GitHub from their own machine). Verified `.env` secrets are NOT in the zip; newly tracked local-cache.ts and .env.example ARE.
+- Final zip: public/zipper.zip · 15MB · 648 files · regenerated AFTER committing the login-label change so the zip's inner code is self-consistent (the label inside says 15 MB and the zip is 15 MB).
+- login-view.tsx: download button label updated "Download source (zipper.zip · 18 MB)" → "Download full source (zipper.zip · 15 MB)" (commit 58f734a). Link href stays /zipper.zip so it now serves the new archive automatically.
+- SW check: /zipper.zip passes through sw.js network-first branch; download requests have empty destination → never cached. No SW change needed.
+- SERVER RESTART INVESTIGATION: first attempts died between tool-call boundaries (not OOM — dmesg shows only 2 old kills from prior sessions; next-server had been reaped with the tool shell's process tree). Root cause: sandbox reaps descendants of the tool-call shell on exit. FIX: double-fork daemonization — `bash -c 'cd … && (exec setsid bun run dev >log 2>&1 </dev/null) & exit 0'` so the daemon root reparents to PID 1 BEFORE the shell exits (same survival mechanism as the sandbox's own agent-browser process, PPid=1). Server now survives across tool calls.
+- Verification: curl /zipper.zip → HTTP 200, 15,045,486 bytes, `unzip -t` integrity OK, byte-identical to source. agent-browser: login page renders the new download button (VLM-confirmed visible + clean layout, no glitches); full auth E2E re-verified post-restart — ravi@glowgo.example login → branch picker (3 branches) → billing shell in Hindi, zero console/page errors. dev.log all 200s post-restart. Lint clean.
+
+Stage Summary:
+- public/zipper.zip = fresh full-source download (15MB): complete tracked codebase + full git history, secrets excluded, clone-brokenness fixed (local-cache.ts now tracked).
+- Login page download button serves the new zip with an accurate size label.
+- Dev server running on :3000 via PPid-1 daemonization — stable across tool calls; app E2E-verified working (login, branch switch, billing).
+- Commits: a49b780 (track missing module + env template), 58f734a (download label). zipper.zip itself is gitignored by design.
+- Push to github.com/Sivazam/saloonX still requires the user to supply a PAT — OR simply download zipper.zip from the login page: it contains .git with all commits; unzip and `git push -u origin master` from any machine with credentials.

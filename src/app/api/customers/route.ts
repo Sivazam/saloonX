@@ -16,16 +16,27 @@ export function daysUntilBirthday(mmdd: string, today = new Date()): number {
   return Math.round((next.getTime() - startOfToday.getTime()) / 86_400_000)
 }
 
+/** A returning customer who went quiet — last visit older than 60 days. */
+const LAPSED_DAYS = 60
+const lapsedWhere = (tenantId: string) => ({
+  tenantId,
+  visits: { gt: 0 },
+  lastVisitAt: { lt: new Date(Date.now() - LAPSED_DAYS * 86_400_000) },
+})
+
 /**
  * GET /api/customers — ADMIN only.
  * `?search=&page=&limit=` → paged customer book.
+ * `?lapsed=true`          → only returning customers quiet for 60+ days.
  * `?birthdaysWithin=7`    → upcoming-birthday list (sorted by soonest).
+ * Every response carries `lapsedCount` — the tenant-wide count of lapsed
+ * customers (branch-agnostic, search-independent) that drives the win-back chip.
  */
 export async function GET(request: Request) {
   const auth = await requireApiUser(["ADMIN"])
   if (!auth.user) return auth.response
   const tenantId = auth.user.tenantId
-  if (!tenantId) return NextResponse.json({ customers: [], total: 0 })
+  if (!tenantId) return NextResponse.json({ customers: [], total: 0, lapsedCount: 0 })
 
   const params = new URL(request.url).searchParams
 
@@ -33,10 +44,13 @@ export async function GET(request: Request) {
   const birthdaysWithin = params.get("birthdaysWithin")
   if (birthdaysWithin !== null) {
     const days = Math.min(60, Math.max(1, Number(birthdaysWithin) || 7))
-    const rows = await db.customer.findMany({
-      where: { tenantId, birthday: { not: null } },
-      include: { branchVisits: { orderBy: { visitedAt: "desc" }, select: { branchName: true }, take: 1 } },
-    })
+    const [rows, lapsedCount] = await Promise.all([
+      db.customer.findMany({
+        where: { tenantId, birthday: { not: null } },
+        include: { branchVisits: { orderBy: { visitedAt: "desc" }, select: { branchName: true }, take: 1 } },
+      }),
+      db.customer.count({ where: lapsedWhere(tenantId) }),
+    ])
     const upcoming: BirthdayCustomerDTO[] = rows
       .filter((c) => c.birthday && daysUntilBirthday(c.birthday) <= days)
       .map((c) => ({
@@ -50,20 +64,24 @@ export async function GET(request: Request) {
         lastWishAt: c.lastWishAt ? c.lastWishAt.toISOString() : null,
       }))
       .sort((a, b) => a.daysUntil - b.daysUntil)
-    return NextResponse.json({ customers: upcoming })
+    return NextResponse.json({ customers: upcoming, lapsedCount })
   }
 
   /* ── Regular paged book ── */
   const search = (params.get("search") ?? "").trim()
+  const lapsedOnly = params.get("lapsed") === "true"
   const page = Math.max(1, Number(params.get("page") ?? 1) || 1)
   const limit = Math.min(200, Math.max(1, Number(params.get("limit") ?? 50) || 50))
 
   const where = {
     tenantId,
     ...(search ? { OR: [{ mobile: { contains: search } }, { name: { contains: search } }] } : {}),
+    ...(lapsedOnly ? lapsedWhere(tenantId) : {}),
   }
 
-  const [customers, total] = await Promise.all([
+  // lapsedCount stays search/lapsed-independent (tenant-wide) so the chip
+  // shows the same number no matter which toggle is active.
+  const [customers, total, lapsedCount] = await Promise.all([
     db.customer.findMany({
       where,
       orderBy: [{ lastVisitAt: "desc" }, { createdAt: "desc" }],
@@ -72,7 +90,8 @@ export async function GET(request: Request) {
       include: { branchVisits: { select: { branchName: true }, take: 3, orderBy: { visitedAt: "desc" } } },
     }),
     db.customer.count({ where }),
+    db.customer.count({ where: lapsedWhere(tenantId) }),
   ])
 
-  return NextResponse.json({ customers: customers.map(toCustomerDTO), total })
+  return NextResponse.json({ customers: customers.map(toCustomerDTO), total, lapsedCount })
 }

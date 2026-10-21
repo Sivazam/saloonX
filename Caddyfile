@@ -1,17 +1,8 @@
+# SaloonX edge proxy — production profile.
+# The app runs on :3000 behind this proxy. NOTE: the sandbox-only
+# XTransformPort escape hatch (proxying to arbitrary localhost ports) was
+# removed for production safety — do NOT reintroduce it on a public edge.
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
-	}
-
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
-	}
-
 	handle {
 		reverse_proxy localhost:3000 {
 			header_up Host {host}

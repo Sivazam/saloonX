@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { randomInt } from "crypto"
 import { z } from "zod"
 import { db } from "@/lib/db"
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit"
@@ -17,7 +18,7 @@ const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 function newCode(): string {
   let code = ""
-  for (let i = 0; i < 6; i++) code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)]
+  for (let i = 0; i < 6; i++) code += ALPHABET[randomInt(ALPHABET.length)]
   return code
 }
 
@@ -77,10 +78,13 @@ export async function POST(request: Request) {
     orderBy: { createdAt: "desc" },
   })
   if (existing) {
+    // NEVER echo the stored customer name back — an unauthenticated caller
+    // must not be able to use this endpoint as a mobile→name oracle. The
+    // guest just re-claimed their own code; they know who they are.
     const res: MenuLeadResponse = {
       code: existing.code,
       pct: existing.pct,
-      name: customer.name,
+      name: name ?? null,
       already: true,
     }
     return NextResponse.json(res)
@@ -108,6 +112,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not generate your code — please try again" }, { status: 500 })
   }
 
-  const res: MenuLeadResponse = { code: lead.code, pct: lead.pct, name: customer.name, already: false }
+  const res: MenuLeadResponse = { code: lead.code, pct: lead.pct, name: name ?? null, already: false }
   return NextResponse.json(res)
 }

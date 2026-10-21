@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { db } from "@/lib/db"
 import { requireApiUser } from "@/lib/auth"
+import { uniqueMenuSlug } from "@/lib/slug"
 import { toBranchProfileDTO } from "@/lib/serialize"
 import { DATA_URL_IMAGE_REGEX } from "@/lib/utils"
 
@@ -119,6 +120,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       ...(d.approved !== undefined
         ? { approved: d.approved, approvedAt: d.approved ? new Date() : null }
         : {}),
+      // Backfill: branches created before slugs existed (or via legacy paths)
+      // get their public QR-menu slug on the first profile edit.
+      ...(branch.menuSlug
+        ? {}
+        : { menuSlug: await uniqueMenuSlug(branch.tenant.name, d.name ?? branch.name, d.city ?? branch.city) }),
       // gstEnabled=false ⇒ GST amount on new bills becomes 0 regardless of gstPct.
     },
     include: { tenant: true },

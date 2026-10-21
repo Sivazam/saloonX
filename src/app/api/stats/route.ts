@@ -8,6 +8,18 @@ export const dynamic = "force-dynamic"
 
 const MAX_DAYS = 90
 
+/** Clamp the requested range: no future dates, no decade-wide full-ledger
+ *  scans — `from` is pulled up to now − 366d, `to` is pushed back to now + 1d. */
+const RANGE_FLOOR_MS = 366 * 86_400_000
+const clampRange = (from: Date, to: Date): { from: Date; to: Date } => {
+  const minFrom = new Date(Date.now() - RANGE_FLOOR_MS)
+  const maxTo = new Date(Date.now() + 86_400_000)
+  return {
+    from: from < minFrom ? new Date(minFrom) : from,
+    to: to > maxTo ? new Date(maxTo) : to,
+  }
+}
+
 export async function GET(request: Request) {
   const auth = await requireApiUser(["ADMIN"])
   if (!auth.user) return auth.response
@@ -24,7 +36,7 @@ export async function GET(request: Request) {
   if (branchIds.length === 0) {
     return NextResponse.json({
       totalRevenue: 0, totalBills: 0, avgBill: 0,
-      byMethod: { CASH: { amount: 0, count: 0 }, UPI: { amount: 0, count: 0 }, CARD: { amount: 0, count: 0 } },
+      byMethod: { CASH: { amount: 0, count: 0 }, UPI: { amount: 0, count: 0 }, CARD: { amount: 0, count: 0 }, SPLIT: { amount: 0, count: 0 } },
       byBranch: [], daily: [], topServices: [], topStaff: [],
       newCustomers: 0, returningBills: 0,
       previous: { totalRevenue: 0, totalBills: 0, avgBill: 0, newCustomers: 0 },
@@ -39,8 +51,10 @@ export async function GET(request: Request) {
   // Default: last 7 days including today.
   const defaultFrom = new Date()
   defaultFrom.setDate(defaultFrom.getDate() - 6)
-  const from = dayStart(fromParam ?? defaultFrom) ?? defaultFrom
-  const to = dayEnd(toParam ?? new Date()) ?? new Date()
+  const { from, to } = clampRange(
+    dayStart(fromParam ?? defaultFrom) ?? defaultFrom,
+    dayEnd(toParam ?? new Date()) ?? new Date(),
+  )
 
   // Only COMPLETED bills count towards revenue/stats. VOIDED bills are excluded.
   const rangeTxns = await db.transaction.findMany({
@@ -125,20 +139,23 @@ export async function GET(request: Request) {
     }))
 
   // Headline numbers + payment split + per-branch split.
-  const byMethod = {
+  // SPLIT = a bill settled part-cash / part-UPI / part-card (grouped by the
+  // stored paymentMethod string so future methods appear naturally).
+  const byMethod: Record<string, { amount: number; count: number }> = {
     CASH: { amount: 0, count: 0 },
     UPI: { amount: 0, count: 0 },
     CARD: { amount: 0, count: 0 },
+    SPLIT: { amount: 0, count: 0 },
   }
   const byBranchMap = new Map<string, BranchSummaryStat>()
   let totalRevenue = 0
   const dailyMap = new Map<string, { revenue: number; bills: number }>()
   const serviceMap = new Map<string, { count: number; revenue: number }>()
-  const staffMap = new Map<string, { revenue: number; bills: number }>()
+  const staffMap = new Map<string, { revenue: number; bills: number; base: number }>()
 
   for (const t of rangeTxns) {
     totalRevenue += t.total
-    const m = byMethod[t.paymentMethod as keyof typeof byMethod]
+    const m = byMethod[t.paymentMethod]
     if (m) {
       m.amount = round2(m.amount + t.total)
       m.count += 1
@@ -155,9 +172,13 @@ export async function GET(request: Request) {
     day.bills += 1
     dailyMap.set(key, day)
 
-    const staff = staffMap.get(t.staffId) ?? { revenue: 0, bills: 0 }
+    const staff = staffMap.get(t.staffId) ?? { revenue: 0, bills: 0, base: 0 }
     staff.revenue = round2(staff.revenue + t.total)
     staff.bills += 1
+    // Commission base is PRE-GST and PRE-TIP: what the staff actually sold
+    // (services minus line discounts) before tax is layered on. `total`
+    // includes GST, so commission must never be derived from `revenue`.
+    staff.base = round2(staff.base + t.subtotal - t.discountAmount)
     staffMap.set(t.staffId, staff)
 
     for (const item of t.items) {
@@ -220,7 +241,8 @@ export async function GET(request: Request) {
         commissionPct: pct,
         revenue: v.revenue,
         bills: v.bills,
-        commission: round2((v.revenue * pct) / 100),
+        // Pre-GST, pre-tip base — see the accumulation loop above.
+        commission: round2((v.base * pct) / 100),
       }
     })
     .sort((a, b) => b.revenue - a.revenue)

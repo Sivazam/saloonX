@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { CalendarRange } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toDateKey } from '@/lib/format'
+import { useT } from '@/store/use-app-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -38,19 +39,15 @@ export function computePreset(id: Exclude<PresetId, 'custom'>, now = new Date())
   }
 }
 
-const PRESETS: { id: Exclude<PresetId, 'custom'>; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'yesterday', label: 'Yesterday' },
-  { id: '7d', label: '7 Days' },
-  { id: '30d', label: '30 Days' },
-  { id: 'month', label: 'This Month' },
-]
+// Preset ids in display order — labels are language-aware, so the labeled
+// list is built inside the component (see RangePicker).
+const PRESET_IDS: Exclude<PresetId, 'custom'>[] = ['today', 'yesterday', '7d', '30d', 'month']
 
 /** Which preset (or 'custom') matches the given range? */
 export function detectPreset(range: DateRange): PresetId {
-  for (const p of PRESETS) {
-    const r = computePreset(p.id)
-    if (r.from === range.from && r.to === range.to) return p.id
+  for (const id of PRESET_IDS) {
+    const r = computePreset(id)
+    if (r.from === range.from && r.to === range.to) return id
   }
   return 'custom'
 }
@@ -67,6 +64,14 @@ export function RangePicker({
   onChange: (range: DateRange) => void
   className?: string
 }) {
+  const L = useT()
+  const presets: { id: Exclude<PresetId, 'custom'>; label: string }[] = [
+    { id: 'today', label: L.admRangeToday },
+    { id: 'yesterday', label: L.admRangeYesterday },
+    { id: '7d', label: L.admRange7d },
+    { id: '30d', label: L.admRange30d },
+    { id: 'month', label: L.admRangeMonth },
+  ]
   const active = detectPreset(value)
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<DateRange>(value)
@@ -85,9 +90,9 @@ export function RangePicker({
   }
 
   return (
-    <div className={cn('flex min-w-0 items-center gap-1.5', className)} role="group" aria-label="Date range">
+    <div className={cn('flex min-w-0 items-center gap-1.5', className)} role="group" aria-label={L.admRangeGroupAria}>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-        {PRESETS.map((p) => {
+        {presets.map((p) => {
           const isActive = active === p.id
           return (
             <button
@@ -113,7 +118,7 @@ export function RangePicker({
           <button
             type="button"
             aria-pressed={active === 'custom'}
-            aria-label="Custom date range"
+            aria-label={L.admRangeCustomAria}
             onClick={openPopover}
             className={cn(
               'flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors',
@@ -123,7 +128,7 @@ export function RangePicker({
             )}
           >
             <CalendarRange className="size-3.5" aria-hidden />
-            Custom
+            {L.admRangeCustom}
           </button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-72">
@@ -131,7 +136,7 @@ export function RangePicker({
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
                 <Label htmlFor="range-from" className="text-xs">
-                  From
+                  {L.admRangeFrom}
                 </Label>
                 <Input
                   id="range-from"
@@ -143,7 +148,7 @@ export function RangePicker({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="range-to" className="text-xs">
-                  To
+                  {L.admRangeTo}
                 </Label>
                 <Input
                   id="range-to"
@@ -155,7 +160,7 @@ export function RangePicker({
               </div>
             </div>
             <Button size="sm" className="w-full" disabled={!draft.from || !draft.to} onClick={applyCustom}>
-              Apply range
+              {L.admRangeApply}
             </Button>
           </div>
         </PopoverContent>

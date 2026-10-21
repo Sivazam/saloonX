@@ -3,12 +3,30 @@
 import { useMemo, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { BadgePercent, Cake, CalendarClock, Check, Loader2, MessageCircle, Pencil, Search, StickyNote, X } from 'lucide-react'
+import {
+  BadgePercent,
+  Cake,
+  CalendarClock,
+  Check,
+  Loader2,
+  Merge,
+  MessageCircle,
+  Pencil,
+  Search,
+  StickyNote,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import { DuoCalendarBlank, DuoUsers, DuoWarning } from '@/components/ui/duotone-icons'
 import { toast } from 'sonner'
-import { apiGet, apiPut } from '@/lib/api-client'
+import { apiGet, apiPost, apiPut } from '@/lib/api-client'
 import { formatDate, formatDateTime, formatINR } from '@/lib/format'
-import type { BranchProfileDTO, CustomerDTO, CustomerHistoryResponse } from '@/lib/types'
+import type {
+  BranchProfileDTO,
+  CustomerDTO,
+  CustomerHistoryResponse,
+  MergeCustomerResponse,
+} from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -137,9 +155,14 @@ function ReminderButton({ c, salonName }: { c: CustomerDTO; salonName: string })
 
 function CustomerHistoryDialog({
   customer,
+  bookTotal,
+  onMerge,
   onClose,
 }: {
   customer: CustomerDTO | null
+  /** Tenant-wide customer count (server) — merge needs a second profile. */
+  bookTotal: number
+  onMerge: (c: CustomerDTO) => void
   onClose: () => void
 }) {
   const qc = useQueryClient()
@@ -233,7 +256,10 @@ function CustomerHistoryDialog({
     profileMut.mutate(patch)
   }
 
-  const mobileDirty = mobileDraft.replace(/\D/g, '').slice(0, 10) !== live.mobile
+  // `live` is null while the dialog is closed-but-mounted (customer=null) —
+  // the dirty/invalid flags must not read through it then. This crashed the
+  // whole Customers view on load before the guard existed.
+  const mobileDirty = live ? mobileDraft.replace(/\D/g, '').slice(0, 10) !== live.mobile : false
   const mobileInvalid = mobileDirty && !/^\d{10}$/.test(mobileDraft.replace(/\D/g, '').slice(0, 10))
 
   return (
@@ -256,15 +282,34 @@ function CustomerHistoryDialog({
                   <DialogDescription className="text-left font-mono">{live.mobile}</DialogDescription>
                 </div>
                 {!editing && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0 gap-1.5"
-                    onClick={() => setEditing(true)}
-                  >
-                    <Pencil className="size-3.5" aria-hidden />
-                    Edit
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-10 gap-1.5"
+                      disabled={bookTotal <= 1 || live.mobile.startsWith('<')}
+                      title={
+                        bookTotal <= 1
+                          ? 'Add a second customer before merging'
+                          : live.mobile.startsWith('<')
+                            ? 'A retired (merged/erased) profile cannot absorb bills'
+                            : 'Merge this profile with another customer'
+                      }
+                      onClick={() => onMerge(live)}
+                    >
+                      <Merge className="size-3.5" aria-hidden />
+                      Merge
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-10 gap-1.5"
+                      onClick={() => setEditing(true)}
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                      Edit
+                    </Button>
+                  </div>
                 )}
               </div>
 
@@ -308,7 +353,8 @@ function CustomerHistoryDialog({
                     />
                     {mobileDirty && !mobileInvalid && (
                       <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                        Changing the mobile — if another customer already has this number, the salon must merge profiles instead.
+                        Changing the mobile — if another customer already has this number, use “Merge”
+                        (top of this dialog) to combine the two profiles instead.
                       </p>
                     )}
                     {mobileInvalid && (
@@ -442,8 +488,10 @@ function CustomerHistoryDialog({
               />
             ) : (
               <>
-                {/* Totals */}
-                <div className="grid grid-cols-3 gap-2 rounded-xl bg-muted/60 p-3 text-center">
+                {/* Totals — min-w-0 so the nowrap ₹ figures can't force the
+                    dialog grid wider than a 360px phone (same class of bug as
+                    the shift dialog's bill rows). */}
+                <div className="grid min-w-0 grid-cols-3 gap-2 rounded-xl bg-muted/60 p-3 text-center">
                   <div>
                     <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Bills</p>
                     <p className="text-base font-bold tabular-nums">{data.totals.bills}</p>
@@ -458,8 +506,9 @@ function CustomerHistoryDialog({
                   </div>
                 </div>
 
-                {/* History list */}
-                <div className="mt-3 space-y-2">
+                {/* History list — min-w-0 lets the per-bill service lines
+                    truncate instead of stretching the dialog sideways. */}
+                <div className="mt-3 min-w-0 space-y-2">
                   {data.transactions.map((t) => (
                     <div
                       key={t.id}
@@ -513,11 +562,238 @@ function CustomerHistoryDialog({
   )
 }
 
+/* ── Duplicate-profile merge ──────────────────────────────────────────────── */
+
+/**
+ * Merge another customer INTO the keeper (the profile whose history dialog
+ * the merge was opened from). The keeper absorbs every bill, visit and
+ * aggregate; the other profile is retired. Irreversible — hence the explicit
+ * warning + destructive confirm.
+ */
+function MergeCustomerDialog({
+  keeper,
+  customers,
+  bookTotal,
+  onClose,
+}: {
+  /** The profile that keeps everything (null = closed). */
+  keeper: CustomerDTO | null
+  /** The loaded customer book — searched client-side for the other profile. */
+  customers: CustomerDTO[]
+  /** Tenant-wide customer count (server) — drives the "not all loaded" hint. */
+  bookTotal: number
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [query, setQuery] = useState('')
+  const [pick, setPick] = useState<CustomerDTO | null>(null)
+
+  // Candidates: live profiles only (merge/erase tombstones start with "<"),
+  // never the keeper, matched on mobile or name — capped to keep the list tappable.
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return customers
+      .filter((c) => c.id !== keeper?.id && !c.mobile.startsWith('<'))
+      .filter((c) => !q || c.mobile.includes(q) || (c.name ?? '').toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [customers, keeper?.id, query])
+
+  const mergeMut = useMutation({
+    mutationFn: () => {
+      if (!pick || !keeper) throw new Error('Pick a customer to merge in first')
+      return apiPost<MergeCustomerResponse>('/api/customers/merge', {
+        fromId: pick.id,
+        toId: keeper.id,
+      })
+    },
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['customers-list'] })
+      void qc.invalidateQueries({ queryKey: ['customer-history'] })
+      void qc.invalidateQueries({ queryKey: ['birthdays'] })
+      toast.success('Profiles merged', {
+        description: `${res.customer.name || res.customer.mobile} now carries the combined bills and visits.`,
+      })
+      onClose()
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const keeperLabel = keeper ? keeper.name || keeper.mobile : ''
+  const pickLabel = pick ? pick.name || pick.mobile : ''
+
+  return (
+    <Dialog open={!!keeper} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-md">
+        {keeper && (
+          <>
+            <DialogHeader className="border-b pb-4">
+              <DialogTitle className="flex items-center gap-2">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <Merge className="size-4" aria-hidden />
+                </span>
+                Merge customers
+              </DialogTitle>
+              <DialogDescription>
+                For the same person billed under two numbers — a QR-signup typo or a mistyped mobile
+                at the counter. Everything ends up on one profile.
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* The keeper — absorbs everything */}
+            <div className="mt-4 space-y-1.5">
+              <p className="text-[11px] font-semibold tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
+                Keep this profile (absorbs everything)
+              </p>
+              <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+                <span
+                  aria-hidden
+                  className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
+                >
+                  {initials(keeper.name || keeper.mobile)}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{keeper.name || 'Unknown customer'}</p>
+                  <p className="font-mono text-xs text-muted-foreground">{keeper.mobile}</p>
+                </div>
+                <div className="ml-auto shrink-0 text-right">
+                  <p className="tnum text-xs font-semibold">{keeper.visits} visits</p>
+                  <p className="tnum text-[11px] text-muted-foreground">{formatINR(keeper.totalSpend)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Pick the profile to fold in */}
+            <div className="mt-4 space-y-2">
+              <label
+                htmlFor="merge-pick-search"
+                className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+              >
+                Merge in &amp; retire
+              </label>
+              <div className="relative">
+                <Search
+                  className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  id="merge-pick-search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search name or mobile..."
+                  className="pl-8"
+                  autoComplete="off"
+                />
+              </div>
+              {candidates.length > 0 ? (
+                <div
+                  className="max-h-56 space-y-1.5 overflow-y-auto"
+                  role="radiogroup"
+                  aria-label="Customer to merge into this profile"
+                >
+                  {candidates.map((c) => {
+                    const selected = pick?.id === c.id
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setPick(c)}
+                        className={cn(
+                          'flex min-h-11 w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition-colors',
+                          selected
+                            ? 'border-amber-500 bg-amber-500/10'
+                            : 'bg-card hover:bg-accent/50 active:bg-accent',
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-bold text-secondary-foreground"
+                        >
+                          {initials(c.name || c.mobile)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{c.name || 'Unknown'}</span>
+                          <span className="block truncate font-mono text-xs text-muted-foreground">
+                            {c.mobile}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-right">
+                          <span className="tnum block text-xs font-semibold">{c.visits} visits</span>
+                          <span className="tnum block text-[11px] text-muted-foreground">
+                            {formatINR(c.totalSpend)}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed p-3 text-center text-xs text-muted-foreground">
+                  {query
+                    ? `No other customer matches “${query}”.`
+                    : 'No other customer to merge.'}
+                </p>
+              )}
+              {bookTotal > customers.length && (
+                <p className="text-[11px] text-muted-foreground">
+                  Searching the {customers.length.toLocaleString('en-IN')} loaded customers — load
+                  more in the book to find older profiles.
+                </p>
+              )}
+            </div>
+
+            {/* Direction warning — shown once a profile is picked */}
+            {pick && (
+              <div
+                role="alert"
+                className="mt-4 flex gap-2 rounded-xl border border-amber-300/70 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+              >
+                <TriangleAlert className="size-4 shrink-0" aria-hidden />
+                <p>
+                  All bills and visits of <strong>{pickLabel}</strong> will move to{' '}
+                  <strong>{keeperLabel}</strong> — {pickLabel}&rsquo;s profile will be retired. This
+                  cannot be undone.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="outline"
+                className="h-11 flex-1"
+                onClick={onClose}
+                disabled={mergeMut.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="h-11 flex-1 gap-1.5"
+                disabled={!pick || mergeMut.isPending}
+                onClick={() => mergeMut.mutate()}
+              >
+                {mergeMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Merge className="size-4" aria-hidden />
+                )}
+                Merge &amp; retire{pick ? ` ${pick.name ? pick.name.split(' ')[0] : pick.mobile}` : ''}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export default function CustomersView() {
   const setView = useAppStore((s) => s.setView)
   const [search, setSearch] = useState('')
   const [lapsedOnly, setLapsedOnly] = useState(false)
   const [selected, setSelected] = useState<CustomerDTO | null>(null)
+  const [mergeFor, setMergeFor] = useState<CustomerDTO | null>(null)
   const debouncedSearch = useDebouncedValue(search, 400)
 
   const branchQ = useQuery({
@@ -527,10 +803,11 @@ export default function CustomersView() {
   const branch = branchQ.data?.branch
 
   const listQ = useInfiniteQuery({
-    queryKey: ['customers-list', debouncedSearch],
+    queryKey: ['customers-list', debouncedSearch, lapsedOnly],
     queryFn: ({ pageParam }) => {
       const p = new URLSearchParams({ page: String(pageParam), limit: '50' })
       if (debouncedSearch) p.set('search', debouncedSearch)
+      if (lapsedOnly) p.set('lapsed', 'true')
       return apiGet<CustomersResponse>(`/api/customers?${p.toString()}`)
     },
     initialPageParam: 1,
@@ -545,17 +822,16 @@ export default function CustomersView() {
     [listQ.data],
   )
   const total = listQ.data?.pages[0]?.total ?? 0
+  /** Server-computed, tenant-wide count of lapsed customers — NOT the
+   *  loaded-pages client count (the book can be much longer than page 1). */
+  const lapsedCount = listQ.data?.pages[0]?.lapsedCount ?? 0
 
   const loyaltyEnabled = branch?.loyaltyEnabled ?? false
   const loyaltyVisits = branch?.loyaltyVisits ?? 0
   const isLoyal = (c: CustomerDTO) => loyaltyEnabled && loyaltyVisits > 0 && c.visits >= loyaltyVisits
   const salonName = branch?.name ?? 'our salon'
-
-  const lapsedCount = useMemo(() => customers.filter(isLapsed).length, [customers])
-  const visibleCustomers = useMemo(
-    () => (lapsedOnly ? customers.filter(isLapsed) : customers),
-    [customers, lapsedOnly],
-  )
+  // The lapsed-only toggle refetches with ?lapsed=true (server-side filter)
+  // instead of filtering the loaded pages client-side.
 
   return (
     <div className="p-4 pb-24 lg:p-6 lg:pb-6">
@@ -579,21 +855,24 @@ export default function CustomersView() {
         </div>
       </div>
 
-      {/* Win-back filter — customers who haven't visited in 60+ days */}
-      {listQ.data && lapsedCount > 0 && (
+      {/* Win-back filter — customers who haven't visited in 60+ days.
+          The count comes from the server (tenant-wide), not the loaded pages. */}
+      {listQ.data && (lapsedCount > 0 || lapsedOnly) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setLapsedOnly((v) => !v)}
             aria-pressed={lapsedOnly}
-            className={`flex h-10 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition-colors ${
+            className={`flex h-11 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition-colors ${
               lapsedOnly
                 ? 'border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-300'
                 : 'bg-card text-muted-foreground hover:bg-accent'
             }`}
           >
             <CalendarClock className="size-4" aria-hidden />
-            {lapsedOnly ? `Showing ${visibleCustomers.length}` : lapsedCount} haven't visited {LAPSED_DAYS}+ days
+            {lapsedOnly
+              ? `Showing ${customers.length} of ${total.toLocaleString('en-IN')} lapsed`
+              : `${lapsedCount.toLocaleString('en-IN')} haven't visited ${LAPSED_DAYS}+ days`}
           </button>
           <span className="text-xs text-muted-foreground">Tap 💬 on a row to send a WhatsApp reminder</span>
         </div>
@@ -621,26 +900,46 @@ export default function CustomersView() {
             </Button>
           </div>
         </div>
-      ) : visibleCustomers.length === 0 ? (
+      ) : customers.length === 0 ? (
         <div className="mt-4 rounded-2xl border bg-card lg:mt-6">
           <EmptyState
             icon={DuoUsers}
-            title={debouncedSearch ? 'No customers match your search' : 'No customers yet'}
+            title={
+              lapsedOnly
+                ? 'No lapsed customers'
+                : debouncedSearch
+                  ? 'No customers match your search'
+                  : 'No customers yet'
+            }
             hint={
-              debouncedSearch
-                ? `Nothing matches "${debouncedSearch}" — try a different name or mobile number.`
-                : 'Customers are added automatically the first time you bill them on the Billing screen.'
+              lapsedOnly
+                ? `Everyone visited within the last ${LAPSED_DAYS} days. 🎉`
+                : debouncedSearch
+                  ? `Nothing matches "${debouncedSearch}" — try a different name or mobile number.`
+                  : 'Customers are added automatically the first time you bill them on the Billing screen.'
             }
             action={
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1 gap-1.5"
-                onClick={() => setView('billing')}
-              >
-                <Scissors className="size-4" aria-hidden />
-                Go to Billing
-              </Button>
+              lapsedOnly ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-1 gap-1.5"
+                  onClick={() => setLapsedOnly(false)}
+                >
+                  <CalendarClock className="size-4" aria-hidden />
+                  Show all customers
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-1 gap-1.5"
+                  onClick={() => setView('billing')}
+                >
+                  <Scissors className="size-4" aria-hidden />
+                  Go to Billing
+                </Button>
+              )
             }
           />
         </div>
@@ -660,7 +959,7 @@ export default function CustomersView() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleCustomers.map((c) => {
+                {customers.map((c) => {
                   const lapsed = isLapsed(c)
                   const d = daysSince(c.lastVisitAt)
                   return (
@@ -718,7 +1017,7 @@ export default function CustomersView() {
 
           {/* Mobile cards */}
           <div className="mt-4 space-y-2.5 md:hidden">
-            {visibleCustomers.map((c, i) => (
+            {customers.map((c, i) => (
               <motion.div
                 key={c.id}
                 initial={{ opacity: 0, y: 6 }}
@@ -766,11 +1065,6 @@ export default function CustomersView() {
                 </div>
               </motion.div>
             ))}
-            {visibleCustomers.length === 0 && (
-              <p className="rounded-2xl border bg-card p-6 text-center text-sm text-muted-foreground">
-                No lapsed customers — everyone visited within {LAPSED_DAYS} days. 🎉
-              </p>
-            )}
           </div>
 
           {/* Load more */}
@@ -793,7 +1087,23 @@ export default function CustomersView() {
         </>
       )}
 
-      <CustomerHistoryDialog customer={selected} onClose={() => setSelected(null)} />
+      <CustomerHistoryDialog
+        customer={selected}
+        bookTotal={total}
+        onMerge={(c) => {
+          // One modal at a time — the history dialog closes so the merge
+          // dialog owns the screen (and no stale keeper data peeks around it).
+          setSelected(null)
+          setMergeFor(c)
+        }}
+        onClose={() => setSelected(null)}
+      />
+      <MergeCustomerDialog
+        keeper={mergeFor}
+        customers={customers}
+        bookTotal={total}
+        onClose={() => setMergeFor(null)}
+      />
     </div>
   )
 }

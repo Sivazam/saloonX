@@ -14,6 +14,7 @@ import {
   QrCode,
   RotateCcw,
   Search,
+  Split,
   StickyNote,
 } from 'lucide-react'
 import { DuoReceipt, DuoWarning } from '@/components/ui/duotone-icons'
@@ -21,7 +22,7 @@ import { cn } from '@/lib/utils'
 import { apiGet, apiPut } from '@/lib/api-client'
 import { formatDateTime, formatDate, formatINR, formatTime } from '@/lib/format'
 import type {
-  PaymentMethod,
+  MethodSummary,
   TransactionDTO,
   TransactionsResponse,
 } from '@/lib/types'
@@ -117,7 +118,7 @@ function BillDetailDialog({
     mutationFn: () =>
       apiPut<{ transaction: TransactionDTO }>('/api/transactions/void', {
         id: bill?.id,
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
       }),
     onSuccess: (res) => {
       toast.success(`Bill ${res.transaction.billNo} voided`)
@@ -316,7 +317,7 @@ function BillDetailDialog({
         </DialogHeader>
         <div className="space-y-2">
           <label htmlFor="void-reason" className="text-sm font-medium">
-            Reason <span className="text-muted-foreground">(optional)</span>
+            Reason <span className="text-muted-foreground">(required)</span>
           </label>
           <Input
             id="void-reason"
@@ -324,7 +325,18 @@ function BillDetailDialog({
             onChange={(e) => setReason(e.target.value)}
             placeholder="e.g. Wrong amount, cancelled service…"
             maxLength={200}
+            aria-invalid={reason.trim().length > 0 && reason.trim().length < 3}
           />
+          <p
+            className={cn(
+              'text-xs',
+              reason.trim().length >= 3 ? 'text-muted-foreground' : 'text-destructive',
+            )}
+          >
+            {reason.trim().length >= 3
+              ? 'Stays on the audit trail next to the voided bill.'
+              : 'Give a short reason — at least 3 characters.'}
+          </p>
         </div>
         <DialogFooter className="gap-2 sm:justify-between">
           <Button variant="ghost" onClick={() => setVoidOpen(false)} disabled={voidMutation.isPending}>
@@ -333,7 +345,7 @@ function BillDetailDialog({
           <Button
             variant="destructive"
             onClick={() => voidMutation.mutate()}
-            disabled={voidMutation.isPending}
+            disabled={voidMutation.isPending || reason.trim().length < 3}
           >
             {voidMutation.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <Ban aria-hidden />}
             Void bill
@@ -409,6 +421,7 @@ export default function TransactionsView() {
   // blockers (window.open('/api/export/csv') does not, on iOS Safari and on
   // most desktop browsers in stricter popup-blocking modes).
   const [exportingCsv, setExportingCsv] = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
 
   async function exportCsv() {
     if (exportingCsv) return
@@ -443,20 +456,55 @@ export default function TransactionsView() {
     }
   }
 
-  function exportPdf() {
-    if (!rows.length || !summary || !branchQ.data?.branch) return
-    // PDF mirrors the revenue summary: voided bills are excluded (they stay in
-    // the ledger + CSV export for the full audit trail).
-    const paidRows = rows.filter((r) => r.status !== 'VOIDED')
-    if (!paidRows.length) {
-      toast.error('All loaded bills are voided — nothing to export')
-      return
-    }
-    toast('Preparing PDF…')
+  async function exportPdf() {
+    if (exportingPdf || !summary || !branchQ.data?.branch) return
+    setExportingPdf(true)
+    const tid = toast.loading('Preparing export…')
     try {
+      // The PDF must cover the WHOLE filter, not just the loaded page —
+      // loop-fetch every page (100/page, newest first) with a progress toast.
+      // Capped at 4,000 bills so the browser stays responsive on huge ledgers.
+      const PAGE_SIZE = 100
+      const EXPORT_CAP = 4000
+      const allRows: TransactionDTO[] = []
+      let filterTotal = 0
+      for (let page = 1; ; page += 1) {
+        const p = new URLSearchParams({
+          from: range.from,
+          to: range.to,
+          page: String(page),
+          limit: String(PAGE_SIZE),
+        })
+        if (method) p.set('method', method)
+        if (staffId !== 'all') p.set('staffId', staffId)
+        if (branchFilter !== 'all') p.set('branchId', branchFilter)
+        if (debouncedSearch) p.set('search', debouncedSearch)
+        const res = await apiGet<TransactionsResponse>(`/api/transactions?${p.toString()}`)
+        filterTotal = res.total
+        allRows.push(...res.data)
+        toast.loading(`Preparing export… ${Math.min(allRows.length, EXPORT_CAP).toLocaleString('en-IN')} bills`, { id: tid })
+        if (res.data.length === 0 || allRows.length >= res.total || allRows.length >= EXPORT_CAP) break
+      }
+      // PDF mirrors the revenue summary: voided bills are excluded (they stay
+      // in the ledger + CSV export for the full audit trail).
+      const paidRows = allRows.filter((r) => r.status !== 'VOIDED')
+      if (!paidRows.length) {
+        toast.error('All bills in this filter are voided — nothing to export', { id: tid })
+        return
+      }
       downloadReportPdf(paidRows, summary, branchQ.data.branch, range.from, range.to)
+      if (filterTotal > EXPORT_CAP) {
+        toast.warning(
+          `PDF covers the newest ${EXPORT_CAP.toLocaleString('en-IN')} bills — use the CSV for all ${filterTotal.toLocaleString('en-IN')}`,
+          { id: tid },
+        )
+      } else {
+        toast.success(`PDF downloaded — ${paidRows.length.toLocaleString('en-IN')} paid bills`, { id: tid })
+      }
     } catch (e) {
-      toast.error((e as Error).message)
+      toast.error((e as Error).message, { id: tid })
+    } finally {
+      setExportingPdf(false)
     }
   }
 
@@ -484,14 +532,23 @@ export default function TransactionsView() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
-                  <Button variant="outline" size="sm" onClick={exportPdf} disabled={pdfDisabled}>
-                    <FileDown aria-hidden />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void exportPdf()}
+                    disabled={pdfDisabled || exportingPdf}
+                  >
+                    {exportingPdf ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <FileDown aria-hidden />}
                     <span className="hidden sm:inline">PDF</span>
                   </Button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                {pdfDisabled ? 'No bills to export' : 'Download PDF report of loaded bills'}
+                {pdfDisabled
+                  ? 'No bills to export'
+                  : exportingPdf
+                    ? 'Building the PDF — fetching every bill in the filter…'
+                    : 'Download PDF report of every bill in the filter'}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -522,6 +579,10 @@ export default function TransactionsView() {
               <ToggleGroupItem value="CARD" className="gap-1 px-2.5 text-xs">
                 <CreditCard className="size-3.5" aria-hidden />
                 Card
+              </ToggleGroupItem>
+              <ToggleGroupItem value="SPLIT" className="gap-1 px-2.5 text-xs">
+                <Split className="size-3.5" aria-hidden />
+                Split
               </ToggleGroupItem>
             </ToggleGroup>
             <Select value={staffId} onValueChange={setStaffId}>
@@ -583,7 +644,14 @@ export default function TransactionsView() {
             <p className="mt-0.5 text-lg font-bold tabular-nums">{formatINR(summary.revenue)}</p>
           </div>
           <div>
-            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Bills</p>
+            <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              Paid bills
+              {total > summary.count && (
+                <span className="ml-1 font-normal normal-case text-muted-foreground/80">
+                  +{(total - summary.count).toLocaleString('en-IN')} voided
+                </span>
+              )}
+            </p>
             <p className="mt-0.5 text-lg font-bold tabular-nums">{summary.count.toLocaleString('en-IN')}</p>
           </div>
           <div>
@@ -593,16 +661,22 @@ export default function TransactionsView() {
           <div>
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Payment Split</p>
             <div className="mt-1 space-y-0.5">
-              {(['CASH', 'UPI', 'CARD'] as PaymentMethod[]).map((m) => (
-                <div key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className={cn('size-1.5 shrink-0 rounded-full', METHOD_META[m].dotClass)} aria-hidden />
-                  <span className="w-7 shrink-0">{METHOD_META[m].label}</span>
-                  <span className="truncate font-medium text-foreground tabular-nums">
-                    {formatINR(summary.byMethod[m].amount)}
-                  </span>
-                  <span className="tabular-nums">({summary.byMethod[m].count})</span>
-                </div>
-              ))}
+              {(['CASH', 'UPI', 'CARD', 'SPLIT'] as const).map((m) => {
+                // SPLIT (mixed-tender) appears only once it has activity — the
+                // server bucket arrives with billing v1.1.
+                const v = (summary.byMethod as Record<string, MethodSummary | undefined>)[m]
+                if (m === 'SPLIT' && (!v || (v.count === 0 && v.amount === 0))) return null
+                return (
+                  <div key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className={cn('size-1.5 shrink-0 rounded-full', METHOD_META[m].dotClass)} aria-hidden />
+                    <span className="w-7 shrink-0">{METHOD_META[m].label}</span>
+                    <span className="truncate font-medium text-foreground tabular-nums">
+                      {formatINR(v?.amount ?? 0)}
+                    </span>
+                    <span className="tabular-nums">({v?.count ?? 0})</span>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>

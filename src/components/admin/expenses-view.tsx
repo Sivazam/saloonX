@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
   Download,
@@ -295,14 +295,21 @@ export default function ExpensesView() {
   const scopeBranches = useAppStore((s) => s.branches)
   const user = useAppStore((s) => s.user)
 
-  const expensesQ = useQuery({
+  const expensesQ = useInfiniteQuery({
     queryKey: ['expenses-list', range.from, range.to, category, branchFilter],
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       apiGet<ExpensesResponse>(
-        `/api/expenses?from=${range.from}&to=${range.to}${category ? `&category=${category}` : ''}${branchFilter !== 'all' ? `&branchId=${branchFilter}` : ''}&limit=100`,
+        `/api/expenses?from=${range.from}&to=${range.to}${category ? `&category=${category}` : ''}${branchFilter !== 'all' ? `&branchId=${branchFilter}` : ''}&page=${pageParam}&limit=100`,
       ),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, pg) => n + pg.data.length, 0)
+      return loaded < lastPage.total ? allPages.length + 1 : undefined
+    },
   })
-  const branchOptions = expensesQ.data?.branches ?? scopeBranches
+  const expenses = expensesQ.data ? expensesQ.data.pages.flatMap((p) => p.data) : []
+  const total = expensesQ.data?.pages[0]?.total ?? 0
+  const branchOptions = expensesQ.data?.pages[0]?.branches ?? scopeBranches
 
   const invalidate = async () => {
     await qc.invalidateQueries({ queryKey: ['expenses-list'] })
@@ -321,7 +328,7 @@ export default function ExpensesView() {
     }
   }
 
-  const summary = expensesQ.data?.summary
+  const summary = expensesQ.data?.pages[0]?.summary
   const byCategorySorted = summary
     ? Object.entries(summary.byCategory).sort((a, b) => b[1].amount - a[1].amount)
     : []
@@ -331,7 +338,7 @@ export default function ExpensesView() {
   const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null)
 
   function exportFilterQS() {
-    const p = new URLSearchParams({ from: range.from, to: range.to, limit: '200' })
+    const p = new URLSearchParams({ from: range.from, to: range.to, limit: '1000' })
     if (category) p.set('category', category)
     if (branchFilter !== 'all') p.set('branchId', branchFilter)
     return p.toString()
@@ -367,6 +374,8 @@ export default function ExpensesView() {
     setExporting('pdf')
     try {
       const qs = exportFilterQS()
+      // Up to 1,000 entries per PDF (the API's export ceiling) — beyond that
+      // the PDF is truncated and says so, and the CSV carries the full ledger.
       const all = await apiGet<ExpensesResponse>(`/api/expenses?${qs}`)
       if (all.data.length === 0) {
         toast.error('No expenses in this range to export')
@@ -379,10 +388,25 @@ export default function ExpensesView() {
       const rangeLabel = category
         ? `${CATEGORY_META[category as ExpenseCategory]?.label ?? category} · ${formatDate(`${range.from}T00:00:00`)} – ${formatDate(`${range.to}T00:00:00`)}`
         : `${formatDate(`${range.from}T00:00:00`)} – ${formatDate(`${range.to}T00:00:00`)}`
-      downloadExpenseReportPdf(all.data, scopeName, user?.tenantLogo ?? null, rangeLabel)
-      toast.success('Expense report downloaded', {
-        description: `${all.data.length} entries · ${formatINR(all.summary.total)} total.`,
-      })
+      const truncated = all.total > all.data.length ? { shown: all.data.length, total: all.total } : undefined
+      downloadExpenseReportPdf(
+        all.data,
+        scopeName,
+        user?.tenantLogo ?? null,
+        rangeLabel,
+        { scope: scopeName, from: range.from, to: range.to },
+        truncated,
+      )
+      if (truncated) {
+        toast.warning(
+          `PDF shows the first ${truncated.shown.toLocaleString('en-IN')} of ${truncated.total.toLocaleString('en-IN')} entries`,
+          { description: 'Download the CSV for the complete ledger.' },
+        )
+      } else {
+        toast.success('Expense report downloaded', {
+          description: `${all.data.length} entries · ${formatINR(all.summary.total)} total.`,
+        })
+      }
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -518,7 +542,7 @@ export default function ExpensesView() {
               <h2 className="text-sm font-semibold">
                 Total expenses
                 <span className="ml-2 font-normal text-muted-foreground">
-                  {expensesQ.data.total} {expensesQ.data.total === 1 ? 'entry' : 'entries'}
+                  {total.toLocaleString('en-IN')} {total === 1 ? 'entry' : 'entries'}
                 </span>
               </h2>
               <p className="text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400">
@@ -561,7 +585,7 @@ export default function ExpensesView() {
 
           {/* Entries */}
           <div className="mt-5 space-y-2">
-            {expensesQ.data.data.length === 0 ? (
+            {expenses.length === 0 ? (
               <div className="rounded-2xl border bg-card p-10 text-center">
                 <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-rose-500/10">
                   <DuoCurrencyInr className="size-7 text-rose-600 dark:text-rose-400" />
@@ -576,7 +600,7 @@ export default function ExpensesView() {
                 </Button>
               </div>
             ) : (
-              expensesQ.data.data.map((e, i) => (
+              expenses.map((e, i) => (
                 <motion.div
                   key={e.id}
                   initial={{ opacity: 0, y: 6 }}
@@ -621,6 +645,30 @@ export default function ExpensesView() {
                   </div>
                 </motion.div>
               ))
+            )}
+
+            {/* Load more — the list pages 100 entries at a time instead of
+                silently truncating; "Showing X of Y" keeps the tail visible. */}
+            {expenses.length > 0 && total > expenses.length && (
+              <div className="space-y-2 pt-1">
+                <Button
+                  variant="outline"
+                  className="h-11 w-full"
+                  onClick={() => void expensesQ.fetchNextPage()}
+                  disabled={expensesQ.isFetchingNextPage}
+                >
+                  {expensesQ.isFetchingNextPage ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  Load more
+                </Button>
+                <p className="text-center text-xs text-muted-foreground">
+                  Showing {expenses.length.toLocaleString('en-IN')} of {total.toLocaleString('en-IN')} entries
+                </p>
+              </div>
+            )}
+            {expenses.length > 0 && total === expenses.length && total > 100 && (
+              <p className="pt-1 text-center text-xs text-muted-foreground">
+                Showing all {total.toLocaleString('en-IN')} entries
+              </p>
             )}
           </div>
         </>

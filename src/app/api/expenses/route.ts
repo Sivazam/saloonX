@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic"
 /** GET (ADMIN): expenses across the franchise (or one ?branchId=), newest first.
  * `?from=YYYY-MM-DD&to=YYYY-MM-DD` — filter by the day the expense occurred.
  * `?category=RENT|…` — narrow to one category.
+ * `?limit=1..1000` — page size (default 100; exports use 1000).
  * The summary covers the WHOLE filter (not just the loaded page). */
 export async function GET(request: Request) {
   const auth = await requireApiUser(["ADMIN"])
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams
   const branchIdParam = params.get("branchId") ?? ""
   const page = Math.max(1, Number(params.get("page") ?? 1) || 1)
-  const limit = Math.min(200, Math.max(1, Number(params.get("limit") ?? 100) || 100))
+  const limit = Math.min(1000, Math.max(1, Number(params.get("limit") ?? 100) || 100))
   const category = params.get("category") ?? ""
 
   const scope = await adminBranchScope(auth.user, branchIdParam || null)
