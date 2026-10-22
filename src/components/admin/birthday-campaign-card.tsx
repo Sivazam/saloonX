@@ -141,9 +141,14 @@ function MissedRow({ m, onMessage }: { m: MissedBirthdayDTO; onMessage: (m: Miss
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{m.name ?? '—'}</p>
-        <p className="tnum truncate text-[11px] text-muted-foreground">
-          +91 {m.mobile} · spent {formatINR(m.totalSpend)}
-          {m.homeBranchName ? ` · ${m.homeBranchName.split('—')[1]?.trim() || m.homeBranchName}` : ''}
+        {/* Money stays COMPLETE — the phone/branch side truncates instead
+            (the old single truncating line ellipsized "spent ₹1,234.56"). */}
+        <p className="tnum flex items-baseline gap-1 text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate">
+            +91 {m.mobile}
+            {m.homeBranchName ? ` · ${m.homeBranchName.split('—')[1]?.trim() || m.homeBranchName}` : ''}
+          </span>
+          <span className="shrink-0 whitespace-nowrap">· spent {formatINR(m.totalSpend)}</span>
         </p>
       </div>
       <Button

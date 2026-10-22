@@ -148,6 +148,14 @@ export interface CatalogResponse {
   categories: CategoryDTO[]
 }
 
+/** GET/PUT /api/favorites — the billing quick row. `personalized: false`
+ *  means the list is the computed tenant-wide most-used default (the user
+ *  hasn't curated their own yet); the UI labels it "Most loved here". */
+export interface FavoritesResponse {
+  favorites: string[] // serviceIds, display order
+  personalized: boolean
+}
+
 /** Per-branch deviation for one service. price/active null = inherit franchise value. */
 export interface ServiceOverrideDTO {
   branchId: string

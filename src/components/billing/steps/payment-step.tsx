@@ -284,9 +284,10 @@ export function PaymentStep({
     <div className="mx-auto max-w-md">
       <h1 className="text-xl font-bold sm:text-2xl [@media(max-height:740px)]:text-lg">{L.payment}</h1>
 
-      {/* Summary card */}
+      {/* Summary card — on desktop the ticket panel owns the itemised bill,
+          so only the discount control stays visible here. */}
       <div className="hairline mt-4 rounded-xl bg-card p-4 [@media(max-height:740px)]:mt-2">
-        <ul className="space-y-2">
+        <ul className="space-y-2 lg:hidden">
           {cart.map((item) => (
             <li key={item.serviceId} className="flex justify-between gap-3 text-sm">
               <span className="min-w-0 truncate text-muted-foreground">
@@ -300,7 +301,7 @@ export function PaymentStep({
         </ul>
 
         <div className="mt-3 space-y-2 border-t border-dashed pt-3 text-sm">
-          <div className="flex justify-between text-muted-foreground">
+          <div className="flex justify-between text-muted-foreground lg:hidden">
             <span>{L.subtotal}</span>
             <span className="tnum font-semibold text-foreground">
               {formatINR(subtotal)}
@@ -417,7 +418,7 @@ export function PaymentStep({
             </span>
           </div>
           {branch.gstEnabled && (
-            <div className="flex justify-between text-muted-foreground">
+            <div className="flex justify-between text-muted-foreground lg:hidden">
               <span>GST ({branch.gstPct}%)</span>
               <span className="tnum font-semibold text-foreground">
                 {formatINR(gstAmount)}
@@ -425,7 +426,7 @@ export function PaymentStep({
             </div>
           )}
           {tip > 0 && (
-            <div className="flex items-center justify-between text-muted-foreground">
+            <div className="flex items-center justify-between text-muted-foreground lg:hidden">
               <span>{L.tipLabel}</span>
               <span className="tnum font-semibold text-amber-700 dark:text-amber-400">
                 +{formatINR(tip)}
@@ -434,7 +435,7 @@ export function PaymentStep({
           )}
         </div>
 
-        <div className="mt-3 flex items-baseline justify-between border-t border-dashed pt-3">
+        <div className="mt-3 flex items-baseline justify-between border-t border-dashed pt-3 lg:hidden">
           <span className="text-base font-semibold">{L.total}</span>
           <motion.span
             key={total}

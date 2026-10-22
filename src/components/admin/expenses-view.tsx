@@ -171,7 +171,11 @@ function ExpenseDialog({
             Rent, supplies, salaries — everything the salon spends.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        {/* min-h-0 + flex-1: with DialogContent now a capped flex column, this
+            middle section is the ONLY part that scrolls — header stays on top,
+            the Save button stays pinned at the bottom, always reachable even
+            on short phones with the keyboard open. */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
           <div className="space-y-2">
             <Label>Category</Label>
             <div className="grid grid-cols-2 gap-2">

@@ -86,6 +86,20 @@ export function newCustomItemId(): string {
 // tiny JSON array of {serviceId,name,price,qty,custom} — persisted best-effort.
 const CART_STORAGE_KEY = 'sx-cart'
 
+/** Marker of who last held a session on this device — decides whether a
+ *  rehydrating session keeps the persisted in-progress bill (same staff,
+ *  browser refresh) or starts clean (different staff signed in). */
+const SESSION_USER_KEY = 'sx-session-user'
+
+function lastSessionUserId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return localStorage.getItem(SESSION_USER_KEY)
+  } catch {
+    return null
+  }
+}
+
 function loadPersistedCart(): CartItem[] {
   if (typeof window === 'undefined') return []
   try {
@@ -98,7 +112,9 @@ function loadPersistedCart(): CartItem[] {
         typeof c === 'object' && c !== null &&
         typeof (c as CartItem).serviceId === 'string' &&
         typeof (c as CartItem).name === 'string' &&
-        typeof (c as CartItem).price === 'number' &&
+        // Number.isFinite, not typeof — NaN is typeof 'number' too, and a
+        // single NaN price would poison every total on every screen.
+        Number.isFinite((c as CartItem).price) &&
         Number.isFinite((c as CartItem).qty) && (c as CartItem).qty > 0,
     ).slice(0, 100)
   } catch {
@@ -115,7 +131,7 @@ function persistCart(cart: CartItem[]) {
   }
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   user: null,
   branches: [],
   currentBranch: null,
@@ -152,9 +168,18 @@ export const useAppStore = create<AppState>((set) => ({
         branches: s.branches,
         currentBranch: s.currentBranch,
         view: defaultView(s.user.role),
-        cart: [],
+        // A page refresh (same user re-hydrating via /api/auth/me) must keep
+        // the in-progress bill — that's the whole point of the persisted cart.
+        // The comparison uses a persisted marker, not the in-memory user (which
+        // is null on boot): only a DIFFERENT user on this device starts clean.
+        ...(lastSessionUserId() !== s.user.id ? { cart: [], lastBill: null } : {}),
         ...(applyLang ? { lang: applyLang } : {}),
       })
+      try {
+        localStorage.setItem(SESSION_USER_KEY, s.user.id)
+      } catch {
+        /* private mode — cart-sharing risk accepted, storage unavailable */
+      }
     } else {
       set({ user: null, branches: [], currentBranch: null, view: 'billing', cart: [] })
     }
@@ -163,6 +188,9 @@ export const useAppStore = create<AppState>((set) => ({
   setView: (view) => set({ view }),
   setCurrentBranch: (currentBranch) => set({ currentBranch }),
   addToCart: (item) => set((s) => {
+    // Guard: a non-finite price must never enter the cart — one NaN line
+    // item poisons subtotal/total everywhere (and would persist).
+    if (!Number.isFinite(item.price)) return s
     // Custom items always start their own line (unique synthetic serviceId).
     const existing = item.custom ? undefined : s.cart.find((c) => c.serviceId === item.serviceId)
     const cart = existing

@@ -1,13 +1,17 @@
 // Formatting helpers — Indian locale, INR currency.
 
 export function formatINR(n: number): string {
-  const isInteger = Math.abs(n - Math.round(n)) < 0.005
+  // Defense-in-depth: a POS must never render "₹NaN" — if a non-finite value
+  // ever reaches here (corrupt cache, poisoned state), show ₹0 instead.
+  // Upstream guards keep real numbers flowing; this is the last line.
+  const v = Number.isFinite(n) ? n : 0
+  const isInteger = Math.abs(v - Math.round(v)) < 0.005
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: isInteger ? 0 : 2,
     minimumFractionDigits: isInteger ? 0 : 2,
-  }).format(n)
+  }).format(v)
 }
 
 export function formatDate(input: string | Date): string {

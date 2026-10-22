@@ -1570,3 +1570,143 @@ Stage Summary:
 - Firebase: Auth correctly wired & verified live; Firestore/Storage intentionally unused (nothing to wire); region guidance documented (Auth=global; use asia-south1 if ever enabling FS/Storage; host the app+DB in India for latency).
 - Sandbox resilience: both gitignored artifacts (zip + DB) now self-heal at every boot via predev.
 - Production verdict delivered to user with honest deferred list: Devanagari in PDFs, SUPER_ADMIN oversight policy, FCM push, appointments (roadmap), GitHub push (needs PAT), + production ops notes (HTTPS, backups, Postgres migration path, Admin SDK upgrade path).
+
+---
+Task ID: DESIGN-PIVOT-1
+Agent: Z.ai Code (main session)
+Task: Owner rated the design 2/10, dislikes the service cards, open to a full pivot.
+
+Work Log:
+- Honest audit first: VLM critique of the billing screen confirmed the owner's read — pastel icon chaos (9-hue tinted chips), "generic SaaS maroon" primary, identical rigid cards with no hierarchy, timid + affordances, custom card breaking the pattern, boring sidebar.
+- PIVOT: "Ink & Ivory Editorial" — deep espresso ink on warm ivory paper; champagne-gold as the single accent; dark espresso sidebar in BOTH themes; dark mode flips to ivory CTAs (Linear-style).
+- globals.css: full token rebuild (primary oklch 0.43 rosewood → 0.28 espresso ink; radius 1rem; new .lift elevation utility; sidebar dark tokens; dark-mode champagne primary).
+- service-art.tsx: unified duotone — all 30 illustrations render as espresso line engravings on ivory-sand bands (per-entry pastel tiles stripped; TILE/WARM_TILE defaults; serviceArt fills them).
+- service-select-step.tsx: cards rebuilt — full-width art hero band (artwork, not icon chip), bold name/duration/ink-price hierarchy, ink add-pill on hover, qty badge + ink stepper when selected, hover lift; custom-amount card shares the same geometry (dashed ink); hairline category chips with solid-ink active; cart bar with .lift.
+- app-shell.tsx: sidebar restyled for espresso — champagne-gold New Bill CTA, active items get white pill + 3px gold marker (shared-layout glide), glass profile card, RoleBadge onDark variant, super-admin note dark variant.
+- Verified in-browser: fresh-load console 0 errors; billing E2E complete (2 items → walk-in → cash → GG1-0046); mobile 390px, dark mode, dashboard, QR menu, customers, catalog all screenshotted + VLM-reviewed. Before/after VLM verdict: 2/10 → 9/10 ("masterclass in less is more"). tsc + eslint clean.
+- Committed e255b8a; zipper.zip regenerated with the pivot included.
+
+Stage Summary:
+- The app now reads as one editorial design language: ink illustrations, ivory paper, espresso chrome, champagne accents — across POS, admin, public menu, login.
+- Dark mode is a first-class lounge variant (ivory CTAs), not an afterthought.
+- Zip download on the login page ships the pivot (inner HEAD e255b8a).
+
+---
+Task ID: 1 (single-agent round)
+Agent: Z.ai Code (main)
+Task: Full design pivot of the billing page after user rated previous design 2/10 ("except color change, you haven't done any other change")
+
+Work Log:
+- Audited prior state: previous "Ink & Ivory" round was a reskin (tokens + card styling); layout/wizard structure unchanged — root cause of user complaint.
+- Pivot decision: rebuild billing as a two-pane POS workspace (Square/Fresha paradigm) — structural, not cosmetic.
+- Added 17 i18n keys (en + hi): search, ticket panel, clear-bill confirm, customer slot, CTAs.
+- New src/components/billing/ticket-panel.tsx: persistent live ticket — espresso header (count + two-tap clear), customer slot, two-line items with steppers, discount/GST/tip totals, animated total, step-aware footer CTA.
+- Rewrote steps/service-select-step.tsx: sticky search ("/" hotkey, Esc clear, X button), category pills with counts, grouped menu rows (icon chip inverts + inline stepper when in bill), search-results view, skeleton rows, dashed custom-amount row; mobile bottom bar now opens a drawer rendering the same TicketPanel.
+- billing-flow.tsx: max-w-6xl, lg grid [1fr_380px] with sticky ticket aside visible on steps 1–3; compact numbered step stepper; step 4 full width; ticket derives customer/discount/GST/tip from existing flow state (no logic changes to offline queue / submission).
+- customer-step.tsx / payment-step.tsx: hid duplicated cart chip + itemised totals on lg (ticket owns them); payment keeps discount editor + tip + note + methods.
+- Verification: tsc + eslint clean; agent-browser E2E golden path (login → Andheri → search "beard" 5 results → add/qty → ticket CTA → Mohammed Ali lookup + 10% loyalty → payment ticket ₹620−₹62=₹558 → cash ₹560 → success GG1-0047); mobile 390px catalog + bar + drawer; dark mode; "/" hotkey; zero console/page errors; VLM reviews 9/10 (fixed ticket-line truncation + padding alignment from first review).
+- Committed b1ae381; rebuilt public/zipper.zip via ensure-zip.sh.
+
+Stage Summary:
+- Billing page is now architecturally different: catalog + live ticket workspace, searchable menu list (no more grid cards), persistent bill through all steps.
+- All billing logic (offline queue, idempotency, split payments, loyalty) untouched — UI-layer refactor only.
+- Artifacts: ticket-panel.tsx (new), service-select-step.tsx (rewritten), billing-flow.tsx (restructured), commit b1ae381.
+
+---
+Task ID: CART-STICKY-1
+Agent: Z.ai Code (main session)
+Task: User feedback: design is now clean/better, but the cart must stay STUCK on screen when items are in it — users had to scroll to the bottom to open the cart card.
+
+Work Log:
+- Root cause (CSS geometry, not logic): the mobile cart bar was `position: sticky; bottom-*` inside `<div class="lg:hidden">` whose height equaled the bar itself (last child of the step). A sticky element can never leave its parent's box → the bar sat dead at the content bottom until scrolled to. Same bug on desktop: `lg:items-start` shrank the ticket aside to its own content, so `sticky top-20` had zero room and the ticket scrolled off while browsing the catalog.
+- Mobile fix: replaced the in-flow sticky bar with a viewport-PINNED `fixed` bar (Square/Swiggy POS pattern) rendered at billing-flow ROOT — outside the framer-motion step wrappers so no transform can re-anchor it. Springs up the instant cart.length > 0 on step 1; count badge with popLayout digit animation; left half opens the ticket bottom-sheet (full TicketPanel with steppers/totals); Continue CTA advances directly to step 2.
+- z-order verified: bar z-40 (same as bottom nav, DOM-later paints above; slides from behind nav), vaul drawer overlay z-50 covers it, saving overlay z-[60] above all.
+- Root bottom padding grows conditionally (ADMIN: calc(10.75rem+safe-area) above nav; STAFF: calc(7rem+safe-area)) so the last catalog row (custom amount) scrolls clear of the pinned bar.
+- Added effect: clearing the bill inside the sheet auto-closes it (empty ticket lingering was a UX wart found in testing).
+- Desktop fix: removed `lg:items-start` from the POS grid — aside now stretches to the 2000px+ catalog column, sticky top-20 sticks (verified: ticket top stays 80px at scrollY 1458); TicketPanel's existing max-h-[calc(100dvh-6.5rem)] caps long tickets.
+- service-select-step.tsx cleanup: removed the dead bar + drawer, onContinue prop, drawerOpen/hasMobileNav/totalQty/subtotal state, and now-unused imports (Drawer*, TicketPanel, AnimatePresence).
+- VLM review round 1 caught real defects: price truncated to "2 items · …" (CTA+chip squeezed the line to 123px) and hint truncated 16px. Restructured: PRICE is now the hero line (text-base bold, structurally untruncatable), count + chevron as the secondary line, dropped the low-value "tap to add more" hint. VLM strict re-review: PASS (badge, ₹4,940, "5 items ^", CTA, nav all clean).
+- E2E (agent-browser, iPhone-14 viewport, ravi ADMIN): add mid-scroll at scrollY 954 → bar pinned in-viewport (709–757 of 844) with zero scrolling; live count/subtotal updates; drawer open/review/continue; bar direct CTA → step 2; stepper back → bar returns; two-tap clear → bar unmounts + sheet auto-closes; full bill completed end-to-end (GG1-0048, ₹950 walk-in cash via desktop); dark mode + light screenshots; console/page errors zero. tsc + eslint clean.
+
+Stage Summary:
+- Cart is now always one glance away on mobile the moment anything is added — no scrolling, ever; and the desktop ticket no longer scrolls out of view.
+- Commit 86ff09e (2 files, +113/−84). zipper.zip regenerated with this fix included.
+- Verification standard for this codebase reaffirmed: DOM-geometry claims (like "sticky works") must be measured in the live browser, not assumed — the sticky bar LOOKED correct in code review but never stuck.
+
+---
+Task ID: UX-ROUND-4 (billing fixes, tasks 1+2)
+Agent: Z.ai Code (main session)
+Task: User reported: (4) NaN total in the current-bill bottom slide-up box; (5) cart bottom bar must be FIXED and ALWAYS present while items are in the cart (not just step 1); plus suspected stale-cart weirdness.
+
+Work Log:
+- NaN investigation: drove the live app through every money path (custom amount, % discount, flat discount, tip, walk-in, loyalty-eligible lookup, drawer reopen after payment edits) — all totals correct in current code. Root-cause analysis: the only ways NaN can reach a total are (a) a persisted cart item with price NaN — loadPersistedCart only checked typeof price === 'number', which NaN PASSES; (b) a branch profile from the offline local cache missing gstPct while gstEnabled=true → undefined arithmetic; (c) SW stale-while-revalidate serving an old chunk. Hardened ALL layers: formatINR now renders ₹0 for non-finite input (last line of defense), loadPersistedCart requires Number.isFinite(price), addToCart drops non-finite prices, and billing-flow money math is wrapped in a safe() finite guard (subtotal/discountAmount/gstPct/gstAmount/tip/expectedTotal).
+- Drawer (bottom slide-up box) completeness: the drawer's TicketPanel previously received ONLY subtotal+discount (no GST/tip) — its total silently disagreed with the payment screen whenever GST/tip applied (₹1,277.99 vs ₹1,297.99 measured). Now receives the complete money state + step-aware CTA (step 3 shows the "Choose how they're paying" footer).
+- Fixed cart bar on ALL steps: cartBarVisible was effStep === 1 && cart.length > 0 — the bar VANISHED on customer/payment steps (the real reason it wasn't "always present"). Now cart.length > 0 && effStep < 4, viewport-pinned (fixed) across services → customer → payment; step-aware CTA (step 1 Continue; step 2 Continue to Payment, gated identically to the in-page button via ticketContinueDisabled; step 3 summary-only since payment methods own the action); hero money line now shows the FULL live total (discount+GST+tip) — verified ₹150 → ₹135 live on 10% discount.
+- Removed customer-step's own mobile sticky bottom bar (Back + Continue) — it would overlap the now-persistent cart bar; its CTA/gating was identical (canContinue === !ticketContinueDisabled), back navigation = top stepper (verified clickable). Desktop unchanged.
+- BONUS pre-existing bug found & fixed: setSession() cleared the cart on EVERY successful /api/auth/me hydration — the persisted "bill survives refresh" feature never actually worked for logged-in staff (store loads LS cart, then /me wipes it). Fix: setSession keeps the cart when the rehydrating user matches the last session user (persisted sx-session-user marker), clears it only when a DIFFERENT user signs in on the device. Verified: reload now restores cart + bar without re-adding.
+- Dev server died at tool boundaries twice (port 3000 gone) — restarted with setsid double-fork detach, verified listening + serving.
+- E2E verified (agent-browser, iPhone 14 viewport): bar fixed at y=696/vh=844 on steps 1-3, survives scroll (visible at scrollY deep), CTA gating (disabled until walk-in/customer resolved), step-3 drawer footer, two-tap clear, 0 console errors. tsc + eslint clean.
+
+Stage Summary:
+- Cart bar: viewport-pinned on every step while the bill has items — no scrolling to reach the bill, ever.
+- NaN: impossible to render now (five independent guards).
+- Drawer total always equals the payment-screen total.
+- Cart now genuinely survives refresh (same staff).
+- Files: billing-flow.tsx, ticket-panel.tsx (no change needed inside), steps/customer-step.tsx, store/use-app-store.ts, lib/format.ts.
+
+Next (parallel, separate files): 3-a dialog overflow audit (base DialogContent has NO max-height/scroll — Add Expense unclickable on phones), 3-b dashboard/card overflow sweep (KPI % chips clip at 171px cards, grid-cols-3 money rows), 4 favorites feature (per-user most-used on top).
+
+---
+Task ID: 3-a
+Agent: general-purpose (dialog overflow audit) + Z.ai Code (main session, verification & completion after subagent hit turn limit)
+Task: "Add expense modal is too long and overflowing, couldn't even click submit. See for any similar issues in entire codebase and all screens and forms."
+
+Work Log:
+- Root cause: base DialogContent (ui/dialog.tsx) had NO max-height and NO overflow — tall dialogs rendered past the phone viewport with the footer's submit button unreachable. Same in alert-dialog.tsx.
+- Base fix (both files): `max-h-[calc(100dvh-2rem)] flex flex-col overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch] p-5 sm:p-6` — every dialog in the app is now viewport-capped and internally scrollable with zero caller changes.
+- Add Expense + Add/Edit Service dialogs upgraded to the pinned-footer pattern: header fixed, middle `min-h-0 flex-1 overflow-y-auto` scrolls, footer (Save/Submit) always on screen even with the keyboard open.
+- Services view rows: controls (price + switch + 3 buttons ≈250px) wrapped below the name via flex-wrap + grow/basis-36 instead of crushing it to ~30px on phones.
+- Transactions bill-detail: WhatsApp-PDF action grid 2-col on phones with short label; money line items whitespace-nowrap instead of w-16 clip.
+- App shell header at 360px: branch switcher label min-w-12 floor; RoleBadge hidden below sm (header budget goes to the branch name).
+- Shift report headline cards: 2-up on phones (cash hero spans both) — ₹11,759.16-class amounts no longer paint into the neighbour card.
+- Verification (main session, iPhone 14 + 360×740): Add Expense golden path — dialog capped (bottom 806/844), submit VISIBLE at y=729, form filled, submitted successfully ("Expense added" toast, test row deleted after). Edit-customer dialog: capped (bottom 685/740), Save at y=367. QR menu conversion tiles, birthday rows, staff rows verified by probe. tsc + eslint clean.
+
+Stage Summary:
+- Every dialog in the app is now reachable on phones — the systemic DialogContent gap is fixed at the base component level.
+- The owner-reported Add Expense flow works end-to-end on mobile (verified by actual submission).
+
+---
+Task ID: 3-b
+Agent: general-purpose (card overflow sweep) + Z.ai Code (main session, verification & completion after subagent hit turn limit)
+Task: "Percentage chips in dashboard cards overflowing, not responsive. Same with cash/upi cards with icon. Check all buttons and cards."
+
+Work Log:
+- Measured root cause: KPI grid (grid-cols-2 on phones) gives cards ~171px; the header row (icon 40px + label + ml-auto delta chip) needed up to 195px → delta chips ("↓ 83.3%") clipped outside card edges (VLM-confirmed).
+- KpiCard restructure: header = icon + truncating label ONLY; delta chip moved beside the VALUE in a flex-wrap row (chip shrink-0) — it can wrap below the value, never clip. Value text-base on phones (6-figure ₹ renders complete), sm:text-2xl lg:[1.65rem] restore display sizes.
+- ProfitStrip (P&L): 3-col money row became a stacked mini-ledger on phones (label left, complete value right), 3-col from sm.
+- PaymentSplit rows, top services, staff perf, recent bills: fixed-width money spans → whitespace-nowrap auto-width; badges flex-wrap.
+- CustomerInsights + DiscountInsights tiles: min-w-0 + text-base on phones; ARPU/leakage amounts render complete.
+- QR menu leads header: micro labels at 9px on phones (CONVERSION clipped in third-width cells).
+- Birthday campaign rows: money ("spent ₹1,234.56") kept COMPLETE — phone/branch side truncates instead.
+- Verification (main session): dashboard probe at 390px — overflow list reduced from clipping-chips to 8 items, ALL intentional `truncate` ellipses; page-level hScroll=false at 390px AND 360px on every view (Customers/Branches/Settings/Staff/QR Menu/Menu&Prices/Transactions/Billing all 0 suspects). VLM verdict mobile: "Fixed — chips fully contained, values legible, nothing clipped". VLM desktop 1440px: "CLEAN — 4 KPI cards properly laid out, chips beside values, no regression". tsc + eslint clean.
+
+Stage Summary:
+- Dashboard chips/cards are fully responsive at 360-390px; money never clips mid-number anywhere.
+- Zero horizontal scroll on every view at both phone widths; desktop unchanged.
+
+---
+Task ID: 4
+Agent: Z.ai Code (main session)
+Task: "Most fav services — routine services listed on top as favorites; users maintain their own per-user list; common most-used shown at start; editable later."
+
+Work Log:
+- Schema: new ServiceFavorite model (userId × serviceId unique, cascades both ways) — server-persisted per-user favorites that follow the staff across devices. db:push applied.
+- API /api/favorites: GET returns the user's saved list (personalized: true) OR, before they've curated anything, the tenant's most-billed services (personalized: false — top 8 by qty from completed bills in the last 180 days, active services only; aggregated in JS because SQLite groupBy can't filter on the parent transaction). PUT replaces the list (zod-validated, max 12, tenant-scoped, deactivated ids rejected) in one transaction.
+- UI (service-select-step.tsx): FavoritesSection — a dashed quick-row between the sticky search/pills and the menu: "Most loved here" (default) / "Your favorites" (once edited) header with an Edit/Done toggle; horizontally-scrollable tiles (art chip inverts to espresso + qty badge when on the bill, branch-priced via join against the loaded catalog so tiles always bill what the menu bills); edit mode shows per-tile X (auto-saves, header flips to Your favorites) and an "+ Add services" tile opening FavoritesPicker — a searchable, category-grouped checkbox dialog (capped at 12) with a count-labeled Save.
+- Picker selection state lives in PickerBody (mounted only while open — useState initializer syncs from the saved list at open; no effects, satisfies react-hooks/set-state-in-effect).
+- i18n: 12 new keys in en + hi.
+- E2E (agent-browser, iPhone 14, ravi): default row renders 8 most-loved tiles from the seeded 274-bill history; tile tap adds to bill (qty badge + inverted chip + cart bar ₹150); Edit → X on Monthly Combo auto-saves ("Favorites saved", header flips); picker → checked Kids Haircut → Done (8) → row shows exact saved set; RELOAD: list persists server-side AND the in-progress cart survived (setSession cart fix from UX-ROUND-4); demo state restored (favorites table cleared → Most loved here returns; test cart cleared via two-tap). Dark mode + desktop 1440px screenshots clean; zero console/page errors; /api/favorites 200s in dev.log. tsc + eslint clean.
+
+Stage Summary:
+- Billing step 1 now opens with the salon's routine services one tap away — and every staff member can curate their own quick row that follows them across devices.
+- Artifacts: prisma ServiceFavorite, /api/favorites (GET+PUT), FavoritesSection + FavoritesPicker in service-select-step.tsx, 24 i18n strings.

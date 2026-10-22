@@ -284,20 +284,22 @@ function LeadsPanel() {
 
   return (
     <div className="rounded-2xl border bg-card shadow-sm">
+      {/* px-2 + phone-size micro labels: "CONVERSION" at 11px micro needs 91px
+          and clipped inside third-width cells on phones. */}
       <div className="grid grid-cols-3 divide-x border-b">
-        <div className="p-4 text-center">
+        <div className="px-2 py-3 text-center sm:p-4">
           <p className="tnum text-2xl font-extrabold">{totals.claims}</p>
-          <p className="micro mt-0.5 text-muted-foreground">Signups</p>
+          <p className="mt-0.5 text-[9px] font-semibold tracking-wide text-muted-foreground uppercase sm:micro">Signups</p>
         </div>
-        <div className="p-4 text-center">
+        <div className="px-2 py-3 text-center sm:p-4">
           <p className="tnum text-2xl font-extrabold text-emerald-600">{totals.redeemed}</p>
-          <p className="micro mt-0.5 text-muted-foreground">Redeemed</p>
+          <p className="mt-0.5 text-[9px] font-semibold tracking-wide text-muted-foreground uppercase sm:micro">Redeemed</p>
         </div>
-        <div className="p-4 text-center">
+        <div className="px-2 py-3 text-center sm:p-4">
           <p className="tnum text-2xl font-extrabold text-primary">
             {totals.claims > 0 ? Math.round((totals.redeemed / totals.claims) * 100) : 0}%
           </p>
-          <p className="micro mt-0.5 text-muted-foreground">Conversion</p>
+          <p className="mt-0.5 text-[9px] font-semibold tracking-wide text-muted-foreground uppercase sm:micro">Conversion</p>
         </div>
       </div>
       <div className="max-h-80 overflow-y-auto p-2">

@@ -96,6 +96,7 @@ model User {
   transactions  Transaction[]
   branches      UserBranch[]
   announcementReads AnnouncementRead[]
+  favorites     ServiceFavorite[]
 }
 
 model UserBranch {
@@ -143,6 +144,7 @@ model Service {
   createdAt   DateTime          @default(now())
   items       TransactionItem[]
   overrides   ServiceOverride[]
+  favorites   ServiceFavorite[]
 }
 
 // Per-branch deviation from the franchise menu. price/active are null =
@@ -158,6 +160,22 @@ model ServiceOverride {
   active    Boolean?
 
   @@unique([serviceId, branchId])
+}
+
+// Per-user favorite services — the one-tap quick row at the top of the billing
+// screen. A user with no rows sees the tenant-wide most-used services instead
+// (computed from bill history); once they save their own list, it's theirs and
+// follows them across devices (server-persisted, not localStorage).
+model ServiceFavorite {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, serviceId])
+  @@index([userId])
 }
 
 model Customer {

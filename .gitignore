@@ -77,3 +77,7 @@ zipper.zip
 
 # agent working context
 /agent-ctx/
+
+# Transient verification screenshots (agent evidence, not source)
+/.zscreens/
+/screenshots/

@@ -454,44 +454,50 @@ function GroomArt({ className }: ArtProps) {
 type ArtEntry = {
   key: string
   Art: ComponentType<ArtProps>
-  /** billing/admin tile — dark-mode aware tint */
-  tile: string
-  /** public menu tile — warm light palette */
-  warmTile: string
+  /** billing/admin tile — dark-mode aware tint (defaults to the unified duotone) */
+  tile?: string
+  /** public menu tile — warm light palette (defaults to the unified duotone) */
+  warmTile?: string
   /** small lucide stand-in for dense UI (chips) */
   re: RegExp
 }
 
+/* Unified duotone — every service illustration renders in the SAME ink-on-
+ * ivory treatment, like line engravings in a fine-dining menu card. (The
+ * previous per-service pastel rainbow read as a mismatched icon pack.) */
+const TILE = 'bg-foreground/[0.055] text-foreground/80'
+const WARM_TILE = 'bg-[#ede3cf] text-[#4a3316]'
+
 const ENTRIES: ArtEntry[] = [
-  { key: 'hairtattoo', Art: HairTattooArt, re: /tattoo/i, tile: 'bg-violet-500/10 text-violet-600 dark:text-violet-400', warmTile: 'bg-violet-100/70 text-violet-700' },
-  { key: 'clipper', Art: ClipperArt, re: /buzz|skin fade|\bfade\b/i, tile: 'bg-stone-500/10 text-stone-600 dark:text-stone-300', warmTile: 'bg-stone-200/70 text-stone-700' },
-  { key: 'kidscut', Art: KidsCutArt, re: /kid|child/i, tile: 'bg-orange-500/10 text-orange-600 dark:text-orange-400', warmTile: 'bg-orange-100/70 text-orange-700' },
-  { key: 'straighten', Art: StraightenArt, re: /straighten|rebond|smoothen/i, tile: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', warmTile: 'bg-teal-100/70 text-teal-700' },
-  { key: 'keratin', Art: KeratinArt, re: /keratin|botox/i, tile: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', warmTile: 'bg-teal-100/70 text-teal-700' },
-  { key: 'groom', Art: GroomArt, re: /groom|bridal/i, tile: 'bg-rose-500/10 text-rose-600 dark:text-rose-400', warmTile: 'bg-rose-100/70 text-rose-700' },
-  { key: 'combo', Art: ComboArt, re: /\+|combo|package|full works|monthly/i, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', warmTile: 'bg-amber-100/70 text-amber-700' },
-  { key: 'blowdry', Art: BlowDryArt, re: /blow|wash/i, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', warmTile: 'bg-amber-100/70 text-amber-700' },
-  { key: 'layers', Art: LayersArt, re: /layer/i, tile: 'bg-rose-500/10 text-rose-600 dark:text-rose-400', warmTile: 'bg-rose-100/70 text-rose-700' },
-  { key: 'highlights', Art: HighlightsArt, re: /balayage|highlight/i, tile: 'bg-violet-500/10 text-violet-600 dark:text-violet-400', warmTile: 'bg-violet-100/70 text-violet-700' },
-  { key: 'roots', Art: RootsArt, re: /root|touch[- ]?up/i, tile: 'bg-violet-500/10 text-violet-600 dark:text-violet-400', warmTile: 'bg-violet-100/70 text-violet-700' },
-  { key: 'beardcolor', Art: BeardColorArt, re: /beard\s*(colou?r|dye)/i, tile: 'bg-violet-500/10 text-violet-600 dark:text-violet-400', warmTile: 'bg-violet-100/70 text-violet-700' },
-  { key: 'colorbowl', Art: ColorBowlArt, re: /colou?r|dye|grey|gray/i, tile: 'bg-violet-500/10 text-violet-600 dark:text-violet-400', warmTile: 'bg-violet-100/70 text-violet-700' },
-  { key: 'goldfacial', Art: GoldFacialArt, re: /gold/i, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', warmTile: 'bg-amber-100/70 text-amber-700' },
-  { key: 'hydrafacial', Art: HydraFacialArt, re: /hydra/i, tile: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', warmTile: 'bg-teal-100/70 text-teal-700' },
-  { key: 'glowfacial', Art: GlowFacialArt, re: /vitamin|glow/i, tile: 'bg-lime-500/10 text-lime-600 dark:text-lime-400', warmTile: 'bg-lime-100/70 text-lime-700' },
-  { key: 'facial', Art: FruitFacialArt, re: /facial/i, tile: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', warmTile: 'bg-emerald-100/70 text-emerald-700' },
-  { key: 'detan', Art: DetanArt, re: /detan|de-tan/i, tile: 'bg-orange-500/10 text-orange-600 dark:text-orange-400', warmTile: 'bg-orange-100/70 text-orange-700' },
-  { key: 'cleanup', Art: CleanupArt, re: /clean[- ]?up/i, tile: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', warmTile: 'bg-emerald-100/70 text-emerald-700' },
-  { key: 'champi', Art: ChampiArt, re: /champi/i, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', warmTile: 'bg-amber-100/70 text-amber-700' },
-  { key: 'shoulder', Art: ShoulderArt, re: /shoulder/i, tile: 'bg-pink-500/10 text-pink-600 dark:text-pink-400', warmTile: 'bg-rose-100/70 text-rose-700' },
-  { key: 'scalp', Art: ScalpArt, re: /scalp|dandruff/i, tile: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', warmTile: 'bg-emerald-100/70 text-emerald-700' },
-  { key: 'aroma', Art: AromaArt, re: /aroma|therapy|ritual|\bspa\b|wellness/i, tile: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', warmTile: 'bg-emerald-100/70 text-emerald-700' },
-  { key: 'headmassage', Art: HeadMassageArt, re: /head/i, tile: 'bg-orange-500/10 text-orange-600 dark:text-orange-400', warmTile: 'bg-orange-100/70 text-orange-700' },
-  { key: 'royalshave', Art: RoyalShaveArt, re: /royal|hot towel/i, tile: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', warmTile: 'bg-amber-100/70 text-amber-700' },
-  { key: 'shave', Art: ShaveArt, re: /shav/i, tile: 'bg-stone-500/10 text-stone-600 dark:text-stone-300', warmTile: 'bg-stone-200/70 text-stone-700' },
-  { key: 'beardspa', Art: BeardSpaArt, re: /beard\s*(spa|sculpt)/i, tile: 'bg-teal-500/10 text-teal-600 dark:text-teal-400', warmTile: 'bg-teal-100/70 text-teal-700' },
-  { key: 'beardtrim', Art: BeardTrimArt, re: /beard|mustache|moustache/i, tile: 'bg-stone-500/10 text-stone-600 dark:text-stone-300', warmTile: 'bg-stone-200/70 text-stone-700' },
-  { key: 'haircut', Art: HaircutArt, re: /cut|trim|styling|stylist|hair/i, tile: 'bg-rose-500/10 text-rose-600 dark:text-rose-400', warmTile: 'bg-rose-100/70 text-rose-700' },
+  { key: 'hairtattoo', Art: HairTattooArt, re: /tattoo/i },
+  { key: 'clipper', Art: ClipperArt, re: /buzz|skin fade|\bfade\b/i },
+  { key: 'kidscut', Art: KidsCutArt, re: /kid|child/i },
+  { key: 'straighten', Art: StraightenArt, re: /straighten|rebond|smoothen/i },
+  { key: 'keratin', Art: KeratinArt, re: /keratin|botox/i },
+  { key: 'groom', Art: GroomArt, re: /groom|bridal/i },
+  { key: 'combo', Art: ComboArt, re: /\+|combo|package|full works|monthly/i },
+  { key: 'blowdry', Art: BlowDryArt, re: /blow|wash/i },
+  { key: 'layers', Art: LayersArt, re: /layer/i },
+  { key: 'highlights', Art: HighlightsArt, re: /balayage|highlight/i },
+  { key: 'roots', Art: RootsArt, re: /root|touch[- ]?up/i },
+  { key: 'beardcolor', Art: BeardColorArt, re: /beard\s*(colou?r|dye)/i },
+  { key: 'colorbowl', Art: ColorBowlArt, re: /colou?r|dye|grey|gray/i },
+  { key: 'goldfacial', Art: GoldFacialArt, re: /gold/i },
+  { key: 'hydrafacial', Art: HydraFacialArt, re: /hydra/i },
+  { key: 'glowfacial', Art: GlowFacialArt, re: /vitamin|glow/i },
+  { key: 'facial', Art: FruitFacialArt, re: /facial/i },
+  { key: 'detan', Art: DetanArt, re: /detan|de-tan/i },
+  { key: 'cleanup', Art: CleanupArt, re: /clean[- ]?up/i },
+  { key: 'champi', Art: ChampiArt, re: /champi/i },
+  { key: 'shoulder', Art: ShoulderArt, re: /shoulder/i },
+  { key: 'scalp', Art: ScalpArt, re: /scalp|dandruff/i },
+  { key: 'aroma', Art: AromaArt, re: /aroma|therapy|ritual|\bspa\b|wellness/i },
+  { key: 'headmassage', Art: HeadMassageArt, re: /head/i },
+  { key: 'royalshave', Art: RoyalShaveArt, re: /royal|hot towel/i },
+  { key: 'shave', Art: ShaveArt, re: /shav/i },
+  { key: 'beardspa', Art: BeardSpaArt, re: /beard\s*(spa|sculpt)/i },
+  { key: 'beardtrim', Art: BeardTrimArt, re: /beard|mustache|moustache/i },
+  { key: 'haircut', Art: HaircutArt, re: /cut|trim|styling|stylist|hair/i },
 ]
 
 const FALLBACK = ENTRIES.find((e) => e.key === 'haircut')!
@@ -500,9 +506,11 @@ const FALLBACK = ENTRIES.find((e) => e.key === 'haircut')!
  * Resolve the illustration for a service (or category) name.
  * Rules run most-specific first: "Beard Colour" → beardcolor (not colorbowl),
  * "Haircut + Beard" → combo (has "+"), "Aroma Head Ritual" → aroma, etc.
+ * Every entry resolves to the unified duotone tile classes.
  */
-export function serviceArt(name: string): ArtEntry {
-  return ENTRIES.find((e) => e.re.test(name)) ?? FALLBACK
+export function serviceArt(name: string): Required<ArtEntry> {
+  const e = ENTRIES.find((x) => x.re.test(name)) ?? FALLBACK
+  return { ...e, tile: e.tile ?? TILE, warmTile: e.warmTile ?? WARM_TILE }
 }
 
 /** Thin wrapper so consumers can render `<ServiceArt name={…} className=… />`. */

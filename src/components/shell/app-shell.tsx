@@ -149,19 +149,24 @@ function ThemeToggle() {
   )
 }
 
-function RoleBadge({ role }: { role: string }) {
+function RoleBadge({ role, onDark = false }: { role: string; onDark?: boolean }) {
+  const tone = onDark
+    ? "border-sidebar-primary/40 bg-sidebar-primary/15 text-sidebar-primary"
+    : "border-primary/30 bg-primary/5 text-primary"
   if (role === "SUPER_ADMIN")
     return (
-      <span className="micro rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-primary">
+      <span className={`micro rounded-md border px-1.5 py-0.5 ${tone}`}>
         Platform
       </span>
     )
   if (role === "ADMIN")
     return (
-      <span className="micro rounded-md border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-primary">Admin</span>
+      <span className={`micro rounded-md border px-1.5 py-0.5 ${tone}`}>Admin</span>
     )
   return (
-    <span className="micro rounded-md border bg-secondary px-1.5 py-0.5 text-secondary-foreground">Staff</span>
+    <span className={`micro rounded-md border px-1.5 py-0.5 ${onDark ? "border-white/15 bg-white/10 text-sidebar-foreground/80" : "bg-secondary text-secondary-foreground"}`}>
+      Staff
+    </span>
   )
 }
 
@@ -174,12 +179,12 @@ function NewBillCta({ onClick, label }: { onClick: () => void; label: string }) 
       onClick={onClick}
       whileHover={{ scale: 1.015 }}
       whileTap={{ scale: 0.97 }}
-      className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-[0_6px_20px_-8px_var(--primary)] transition-shadow hover:shadow-[0_8px_26px_-8px_var(--primary)]"
+      className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-sidebar-primary px-4 py-3 text-sm font-bold text-sidebar-primary-foreground shadow-[0_6px_20px_-8px_oklch(0.82_0.115_85/0.5)] transition-shadow hover:shadow-[0_8px_28px_-8px_oklch(0.82_0.115_85/0.65)]"
     >
       {/* soft sheen sweep on hover */}
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-primary-foreground/15 to-transparent transition-transform duration-700 group-hover:translate-x-full"
+        className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-700 group-hover:translate-x-full"
       />
       <DuoScissors className="size-4.5 shrink-0" />
       {label}
@@ -204,7 +209,7 @@ function SidebarNav({
     <>
       {groups.map((group, gi) => (
         <div key={group.label} className={gi === 0 ? "" : "mt-5"}>
-          <p className="micro px-3 pb-1.5 pt-1 text-muted-foreground/70">{group.label}</p>
+          <p className="micro px-3 pb-1.5 pt-1 text-sidebar-foreground/40">{group.label}</p>
           <div className="flex flex-col gap-0.5">
             {group.items.map((item) => {
               const active = effectiveView === item.view
@@ -218,18 +223,32 @@ function SidebarNav({
                   whileHover={prefersReduced ? undefined : { x: 2 }}
                   className={cn(
                     "relative flex w-full items-center rounded-lg py-2.5 pl-3 pr-4 text-sm font-medium transition-colors",
-                    active ? "text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                    active
+                      ? "font-semibold text-sidebar-foreground"
+                      : "text-sidebar-foreground/65 hover:bg-white/[0.05] hover:text-sidebar-foreground",
                   )}
                 >
                   {active && (
                     <motion.span
                       layoutId="sidebar-active"
-                      className="absolute inset-0 rounded-lg bg-primary shadow-sm"
+                      className="absolute inset-0 rounded-lg bg-white/[0.09] ring-1 ring-white/[0.06]"
+                      transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                    />
+                  )}
+                  {active && (
+                    <motion.span
+                      layoutId="sidebar-active-marker"
+                      className="absolute top-1/2 left-0 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary"
                       transition={{ type: "spring", stiffness: 400, damping: 32 }}
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-3">
-                    <Icon className="size-5 shrink-0" />
+                    <Icon
+                      className={cn(
+                        "size-5 shrink-0 transition-colors",
+                        active ? "text-sidebar-primary" : "text-sidebar-foreground/55",
+                      )}
+                    />
                     {item.label}
                   </span>
                 </motion.button>
@@ -266,20 +285,20 @@ function SidebarProfile({
         <button
           type="button"
           aria-label="Account menu"
-          className="flex w-full items-center gap-2.5 rounded-xl border bg-card p-2.5 text-left shadow-sm transition-colors hover:bg-accent"
+          className="flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.05] p-2.5 text-left transition-colors hover:bg-white/[0.09]"
         >
-          <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+          <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground">
             {initials(name)}
             <span
               aria-hidden
-              className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-card bg-emerald-500"
+              className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-sidebar bg-emerald-500"
             />
           </span>
           <span className="min-w-0 flex-1 leading-tight">
-            <span className="block truncate text-[13px] font-semibold">{name}</span>
-            <span className="block truncate text-[11px] text-muted-foreground">{email}</span>
+            <span className="block truncate text-[13px] font-semibold text-sidebar-foreground">{name}</span>
+            <span className="block truncate text-[11px] text-sidebar-foreground/55">{email}</span>
           </span>
-          <RoleBadge role={role} />
+          <RoleBadge role={role} onDark />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-60">
@@ -352,7 +371,9 @@ function BranchSwitcher() {
           className="flex min-w-0 items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 shadow-sm transition-colors hover:bg-accent disabled:opacity-60"
         >
           <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="max-w-32 truncate text-sm font-medium sm:max-w-56">
+          {/* min-w-12 floor: at 360px the header is budget-tight and the flex
+              shrink chain used to squeeze this label to 0px (icon-only button). */}
+          <span className="min-w-12 max-w-32 truncate text-sm font-medium sm:max-w-56">
             {currentBranch?.name ?? "Choose branch"}
           </span>
           <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
@@ -544,7 +565,11 @@ export function AppShell() {
                       {user ? initials(user.name) : "?"}
                     </span>
                     <span className="hidden max-w-36 truncate text-sm font-medium sm:block">{user?.name}</span>
-                    <RoleBadge role={role} />
+                    {/* Role badge is desktop/tablet-only — on phones the header
+                        budget goes to the branch switcher label instead. */}
+                    <span className="hidden sm:inline-flex">
+                      <RoleBadge role={role} />
+                    </span>
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -588,7 +613,7 @@ export function AppShell() {
           )}
           <SidebarNav groups={sidebarGroups} effectiveView={effectiveView} setView={setView} />
           {isSuperAdmin && (
-            <p className="mt-6 rounded-lg border bg-background/60 p-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-6 rounded-lg border border-white/10 bg-white/[0.04] p-3 text-xs leading-relaxed text-sidebar-foreground/60">
               You are the platform owner. Onboard franchises, approve new branches and review each
               chain&apos;s performance here.
             </p>

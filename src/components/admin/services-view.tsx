@@ -372,14 +372,17 @@ export default function ServicesView() {
                       const isOpen = expanded.has(s.id)
                       return (
                         <div key={s.id}>
-                          <div className="flex items-center gap-2.5 px-3 py-2.5 sm:px-4">
+                          {/* flex-wrap + grow/basis-36: price + switch + 3
+                              buttons (≈250px) used to crush the name column to
+                              ~30px on phones — controls wrap below instead. */}
+                          <div className="flex flex-wrap items-center gap-2.5 px-3 py-2.5 sm:px-4">
                             <span
                               className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${serviceArt(s.name).tile}`}
                               aria-hidden
                             >
                               <ServiceArt name={s.name} className="size-6" />
                             </span>
-                            <div className="min-w-0 flex-1">
+                            <div className="min-w-0 grow basis-36">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <p className="truncate text-sm font-medium">{s.name}</p>
                                 {!s.active && (
@@ -397,6 +400,7 @@ export default function ServicesView() {
                                 {s.durationMin != null ? `${s.durationMin} min` : 'No fixed duration'}
                               </p>
                             </div>
+                            <div className="ml-auto flex shrink-0 items-center gap-2.5">
                             <p className="tnum shrink-0 text-sm font-bold text-primary">
                               {formatINR(s.price)}
                               <span className="ml-1 hidden text-[10px] font-medium text-muted-foreground sm:inline">
@@ -447,6 +451,7 @@ export default function ServicesView() {
                                 />
                               </Button>
                             )}
+                            </div>
                           </div>
 
                           {/* Per-branch pricing panel */}
@@ -600,7 +605,9 @@ export default function ServicesView() {
                 : 'New services are active everywhere immediately and show up in billing.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          {/* Scrollable middle — header + footer stay pinned (same pattern as
+              the Add Expense dialog; DialogContent is a capped flex column). */}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
             <div className="space-y-1.5">
               <Label htmlFor="svc-name">Name</Label>
               <Input

@@ -215,7 +215,7 @@ function BillDetailDialog({
                     <p className="shrink-0 text-xs text-muted-foreground tabular-nums">
                       {it.qty} × {formatINR(it.price)}
                     </p>
-                    <p className="w-16 shrink-0 text-right font-medium tabular-nums">
+                    <p className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums">
                       {formatINR(it.price * it.qty)}
                     </p>
                   </div>
@@ -255,17 +255,22 @@ function BillDetailDialog({
             </div>
 
             <div className="border-t pt-4">
-              <div className="grid grid-cols-3 gap-2">
+              {/* WhatsApp PDF needs ~140px for its label — in a 3-col grid on
+                  phones it clipped 14px outside its button. Full row below sm. */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Button
                   variant="outline"
-                  className="h-11 gap-1.5"
+                  className="col-span-2 h-11 gap-1.5 sm:col-span-1"
                   disabled={isVoided || !branch}
                   onClick={handleShareWhatsApp}
                 >
                   <svg viewBox="0 0 24 24" className="size-4" fill="currentColor" aria-hidden>
                     <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.87 9.87 0 0 0 4.74 1.21c5.46 0 9.9-4.45 9.9-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2m.01 1.67c2.2 0 4.26.86 5.82 2.42a8.19 8.19 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24M8.53 7.33c-.16 0-.43.06-.66.31-.22.25-.87.85-.87 2.07 0 1.22.89 2.4 1 2.56.14.19 1.76 2.84 4.3 3.86 2.13.86 2.56.69 3.02.64.47-.04 1.51-.61 1.72-1.21.21-.6.21-1.11.15-1.21-.06-.1-.22-.16-.47-.28-.25-.13-1.47-.72-1.69-.81-.23-.08-.37-.12-.56.12-.16.25-.64.81-.78.97-.15.16-.29.18-.53.06-.25-.13-1.05-.39-2-1.23-.73-.66-1.23-1.47-1.38-1.72-.14-.25-.01-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.09-.17.04-.31-.02-.44-.06-.12-.56-1.35-.77-1.84-.2-.48-.4-.42-.56-.43l-.48-.01" />
                   </svg>
-                  WhatsApp PDF
+                  {/* Short label on phones: "WhatsApp PDF" + icon needs ~112px
+                      but the 3-col action grid gives ~98px per button. */}
+                  <span className="sm:hidden">WhatsApp</span>
+                  <span className="hidden sm:inline">WhatsApp PDF</span>
                 </Button>
                 <Button variant="outline" className="h-11 gap-1.5" disabled={isVoided || !branch} onClick={handleCopyReceipt}>
                   <Copy aria-hidden />
@@ -658,27 +663,29 @@ export default function TransactionsView() {
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Avg Bill</p>
             <p className="mt-0.5 text-lg font-bold tabular-nums">{formatINR(summary.avgBill)}</p>
           </div>
-          <div>
+          {/* Payment split spans the full row below sm — money must render
+              complete, never ellipsized inside a half-width tile. */}
+          <div className="col-span-2 sm:col-span-2 lg:col-span-1">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Payment Split</p>
-            <div className="mt-1 space-y-0.5">
-              {(['CASH', 'UPI', 'CARD', 'SPLIT'] as const).map((m) => {
-                // SPLIT (mixed-tender) appears only once it has activity — the
-                // server bucket arrives with billing v1.1.
-                const v = (summary.byMethod as Record<string, MethodSummary | undefined>)[m]
-                if (m === 'SPLIT' && (!v || (v.count === 0 && v.amount === 0))) return null
-                return (
-                  <div key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className={cn('size-1.5 shrink-0 rounded-full', METHOD_META[m].dotClass)} aria-hidden />
-                    <span className="w-7 shrink-0">{METHOD_META[m].label}</span>
-                    <span className="truncate font-medium text-foreground tabular-nums">
-                      {formatINR(v?.amount ?? 0)}
-                    </span>
-                    <span className="tabular-nums">({v?.count ?? 0})</span>
-                  </div>
-                )
-              })}
+              <div className="mt-1 space-y-0.5">
+                {(['CASH', 'UPI', 'CARD', 'SPLIT'] as const).map((m) => {
+                  // SPLIT (mixed-tender) appears only once it has activity — the
+                  // server bucket arrives with billing v1.1.
+                  const v = (summary.byMethod as Record<string, MethodSummary | undefined>)[m]
+                  if (m === 'SPLIT' && (!v || (v.count === 0 && v.amount === 0))) return null
+                  return (
+                    <div key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className={cn('size-1.5 shrink-0 rounded-full', METHOD_META[m].dotClass)} aria-hidden />
+                      <span className="shrink-0 whitespace-nowrap">{METHOD_META[m].label}</span>
+                      <span className="font-medium whitespace-nowrap text-foreground tabular-nums">
+                        {formatINR(v?.amount ?? 0)}
+                      </span>
+                      <span className="tabular-nums">({v?.count ?? 0})</span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          </div>
         </div>
       ) : null}
 

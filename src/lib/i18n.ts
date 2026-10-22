@@ -55,6 +55,36 @@ export const en = {
   couldntLoad: "Couldn't load services",
   tryAgain: 'Try again',
 
+  // Catalog — search + ticket panel (POS workspace)
+  searchServices: 'Search services…',
+  clearSearch: 'Clear search',
+  noResults: 'No matches',
+  noResultsHint: 'Try a different name or category.',
+
+  // Favorites quick row (billing step 1)
+  favMostLoved: 'Most loved here',
+  favYours: 'Your favorites',
+  favEdit: 'Edit',
+  favDone: 'Done',
+  favRemoveOne: 'Remove from favorites',
+  favAddTile: 'Add services',
+  favPickerTitle: 'Choose your favorites',
+  favPickerHint: 'Pick the services you bill most often — they stay on top for one-tap access.',
+  favPickerSearch: 'Search services',
+  favSaved: 'Favorites saved',
+  resultsWord: 'results',
+  currentBill: 'Current bill',
+  billEmpty: 'Build the bill',
+  billEmptyHint: 'Tap a service to add it.',
+  clearBill: 'Clear bill',
+  tapAgainToClear: 'Tap again to clear',
+  customerSlot: 'Customer',
+  customerNextStep: 'Not added yet',
+  walkInShort: 'Walk-in',
+  newCustomerShort: 'New customer',
+  continueToCustomer: 'Continue — Customer',
+  pickPaymentMethod: 'Choose how they\u2019re paying',
+
   // Step 2 — customer
   customerMobile: 'Customer Mobile Number',
   returningHint: 'Returning customers unlock loyalty rewards.',
@@ -394,6 +424,36 @@ export const hi: Dict = {
   noServicesHint: 'एडमिन से कहें कि एडमिन पैनल से सेवाएं जोड़ें।',
   couldntLoad: 'सेवाएं लोड नहीं हो सकीं',
   tryAgain: 'फिर कोशिश करें',
+
+  // Catalog — search + ticket panel (POS workspace)
+  searchServices: 'सेवा खोजें…',
+  clearSearch: 'खोज मिटाएं',
+  noResults: 'कुछ नहीं मिला',
+  noResultsHint: 'दूसरा नाम या श्रेणी आज़माएं।',
+
+  // Favorites quick row (billing step 1)
+  favMostLoved: 'यहाँ सबसे लोकप्रिय',
+  favYours: 'आपके पसंदीदा',
+  favEdit: 'बदलें',
+  favDone: 'हो गया',
+  favRemoveOne: 'पसंदीदा से हटाएँ',
+  favAddTile: 'सेवाएँ जोड़ें',
+  favPickerTitle: 'अपनी पसंदीदा सेवाएँ चुनें',
+  favPickerHint: 'जो सेवाएँ आप सबसे ज़्यादा बिल करते हैं उन्हें चुनें — ऊपर ही एक टैप में मिलेंगी।',
+  favPickerSearch: 'सेवा खोजें',
+  favSaved: 'पसंदीदा सेव जो गए',
+  resultsWord: 'नतीजे',
+  currentBill: 'वर्तमान बिल',
+  billEmpty: 'बिल बनाएं',
+  billEmptyHint: 'जोड़ने के लिए सेवा पर टैप करें।',
+  clearBill: 'बिल खाली करें',
+  tapAgainToClear: 'खाली करने के लिए फिर टैप करें',
+  customerSlot: 'ग्राहक',
+  customerNextStep: 'अभी नहीं जुड़ा',
+  walkInShort: 'बिना नंबर',
+  newCustomerShort: 'नया ग्राहक',
+  continueToCustomer: 'आगे बढ़ें — ग्राहक',
+  pickPaymentMethod: 'भुगतान का तरीका चुनें',
 
   // Step 2 — customer
   customerMobile: 'ग्राहक का मोबाइल नंबर',

@@ -449,16 +449,18 @@ export function ShiftReportDialog({
           </div>
         ) : (
           /* min-w-0: the bill rows carry nowrap truncate text — without it
-             their intrinsic min-content forces a horizontal scroll inside
-             DialogContent's grid on 360px phones. */
+             their intrinsic min-content forces a horizontal overflow inside
+             DialogContent on 360px phones. */
           <div className="min-w-0 space-y-4">
-            {/* Headline numbers */}
-            <div className="grid grid-cols-3 gap-2">
+            {/* Headline numbers. 2-up on phones (hero spans both): three
+                equal cols leave ~74px per card — too narrow for amounts like
+                ₹11,759.16, which painted 25px into the neighbouring card. */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0 }}
-                className="rounded-xl border border-emerald-300/60 bg-emerald-50/80 p-3 dark:border-emerald-900 dark:bg-emerald-950/40"
+                className="col-span-2 rounded-xl border border-emerald-300/60 bg-emerald-50/80 p-3 sm:col-span-1 dark:border-emerald-900 dark:bg-emerald-950/40"
               >
                 <p className="micro text-emerald-700 dark:text-emerald-400">Cash to hand over</p>
                 <p className="tnum mt-1 text-lg font-bold text-emerald-800 dark:text-emerald-300">

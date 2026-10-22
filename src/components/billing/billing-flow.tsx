@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery } from '@tanstack/react-query'
-import { Check, Loader2 } from 'lucide-react'
+import { ArrowRight, Check, ChevronUp, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiGet, apiPost } from '@/lib/api-client'
 import { readLocalCache, writeLocalCache } from '@/lib/local-cache'
@@ -13,6 +13,7 @@ import {
   type QueuedBill,
 } from '@/lib/offline-queue'
 import { round2 } from '@/lib/serialize'
+import { formatINR } from '@/lib/format'
 import type {
   BranchProfileDTO,
   CatalogResponse,
@@ -24,6 +25,7 @@ import type {
 } from '@/lib/types'
 import { useAppStore, useT } from '@/store/use-app-store'
 import { useKeypad } from './use-keypad'
+import { TicketPanel, type TicketCustomer } from './ticket-panel'
 import { ServiceSelectStep } from './steps/service-select-step'
 import {
   CustomerStep,
@@ -33,6 +35,7 @@ import {
 import { PaymentStep } from './steps/payment-step'
 import { SuccessStep } from './steps/success-step'
 import { Button } from '@/components/ui/button'
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
 import { LangToggle } from '@/components/shell/lang-toggle'
 
 type Step = 1 | 2 | 3 | 4
@@ -60,6 +63,15 @@ export default function BillingFlow() {
   // ── Flow state ───────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>(1)
   const [dir, setDir] = useState(1)
+  /** Mobile: bottom-sheet ticket, opened from the fixed cart bar. */
+  const [cartDrawerOpen, setCartDrawerOpen] = useState(false)
+  // Clearing the bill inside the sheet leaves nothing to show — close it.
+  useEffect(() => {
+    if (cart.length === 0) setCartDrawerOpen(false)
+  }, [cart.length])
+  // ADMINs get the mobile bottom nav (fixed, z-40) — the cart bar must
+  // hover above it so the Continue CTA is never covered.
+  const hasMobileNav = user?.role === 'ADMIN'
 
   const [fetchedMobile, setFetchedMobile] = useState<string | null>(null)
   const [customer, setCustomer] = useState<CustomerDTO | null>(null)
@@ -230,16 +242,23 @@ export default function BillingFlow() {
   const branchProfile = branchQuery.data?.branch
 
   // Money math mirrors the server exactly (round2 at each step) so the
-  // expectedTotal drift check never fires on healthy data.
-  const subtotal = round2(cart.reduce((s, c) => s + c.price * c.qty, 0))
-  const discountAmount =
+  // expectedTotal drift check never fires on healthy data. Every derived
+  // figure is finite-guarded: a POS must never show ₹NaN, whatever upstream
+  // state (cached branch profile with a missing gstPct, poisoned cart) does.
+  const safe = (n: number) => (Number.isFinite(n) ? n : 0)
+  const subtotal = safe(round2(cart.reduce((s, c) => s + c.price * c.qty, 0)))
+  const totalQty = cart.reduce((a, c) => a + c.qty, 0)
+  const discountAmount = safe(
     discountFlat > 0
       ? round2(Math.min(discountFlat, subtotal))
-      : round2((subtotal * discountPct) / 100)
-  const gstPct = branchProfile?.gstEnabled ? branchProfile.gstPct : 0
-  const gstAmount = round2(((subtotal - discountAmount) * gstPct) / 100)
-  const tip = round2(tipAmount)
-  const expectedTotal = round2(subtotal - discountAmount + gstAmount + tip)
+      : round2((subtotal * discountPct) / 100),
+  )
+  const gstPct = branchProfile?.gstEnabled
+    ? safe(Number(branchProfile.gstPct))
+    : 0
+  const gstAmount = safe(round2(((subtotal - discountAmount) * gstPct) / 100))
+  const tip = safe(round2(tipAmount))
+  const expectedTotal = safe(round2(subtotal - discountAmount + gstAmount + tip))
 
   /** Payload shared by the online POST and the offline queue. The offline
    *  copy intentionally omits expectedTotal (an unattended sync cannot answer
@@ -468,70 +487,134 @@ export default function BillingFlow() {
     toast.success(L.readyForNext)
   }
 
+  // ── Ticket panel (desktop aside) — the live bill being built ──────────
+  const ticketDiscountLabel =
+    discountFlat > 0
+      ? formatINR(discountFlat)
+      : discountPct > 0
+        ? `${Math.round(discountPct)}%`
+        : null
+
+  const customerResolved =
+    !walkIn &&
+    keypad.digits.length === 10 &&
+    fetchedMobile === keypad.digits &&
+    !lookupLoading &&
+    !lookupError
+  const ticketContinueDisabled = effStep === 2 && !(walkIn || customerResolved)
+
+  const ticketCustomer: TicketCustomer | null =
+    effStep === 1
+      ? null
+      : walkIn
+        ? { name: L.walkInDisplay, sub: L.wontCountLoyalty, initials: '', walkIn: true }
+        : customer
+          ? {
+              name: customer.name || customer.mobile,
+              sub: `${customer.visits} ${
+                customer.visits === 1 ? L.visitWord : L.visitsWord
+              } · ${formatINR(customer.totalSpend)}`,
+              initials:
+                (customer.name ?? '')
+                  .trim()
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((p) => p[0])
+                  .join('')
+                  .toUpperCase() || customer.mobile.slice(-2),
+            }
+          : customerResolved
+            ? {
+                name: name.trim() || keypad.digits,
+                sub: L.newCustomerShort,
+                initials: keypad.digits.slice(-2),
+              }
+            : null
+
+  /** Mobile cart bar is mounted — pin extra scroll room under the step
+   *  content so the last control is never covered. The bar is now FIXED and
+   *  present on EVERY step (1–3) while the bill has items — the cashier can
+   *  always see the running total and open the ticket without scrolling. */
+  const cartBarVisible = cart.length > 0 && effStep < 4
+
   return (
-    <div className="p-4 pb-24 lg:p-6 lg:pb-6 [@media(max-height:740px)]:pt-3!">
-      <div className="mx-auto max-w-4xl">
-        {/* Step indicator pills + language toggle */}
+    <div
+      className={`p-4 lg:p-6 lg:pb-6 [@media(max-height:740px)]:pt-3! ${
+        cartBarVisible
+          ? hasMobileNav
+            ? 'pb-[calc(10.75rem+env(safe-area-inset-bottom))]'
+            : 'pb-[calc(7rem+env(safe-area-inset-bottom))]'
+          : 'pb-24'
+      }`}
+    >
+      <div className="mx-auto max-w-6xl">
+        {/* Step header — compact inline stepper + language toggle */}
         {effStep < 4 && (
           <div className="flex items-center justify-between gap-2">
-            <nav aria-label="Billing steps" className="flex items-center gap-1.5 sm:gap-2">
+            <nav aria-label="Billing steps" className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2.5">
               {stepLabels.map((label, i) => {
-              const n = (i + 1) as 1 | 2 | 3
-              const active = effStep === n
-              const complete = effStep > n
-              const clickable = complete && effStep !== 4 && !submitting
-              return (
-                <div key={label} className="flex items-center gap-1.5 sm:gap-2">
-                  {i > 0 && (
-                    <span
-                      className={`h-px w-4 sm:w-6 ${complete ? 'bg-primary/60' : 'bg-border'}`}
-                      aria-hidden="true"
-                    />
-                  )}
-                  <button
-                    type="button"
-                    disabled={!clickable}
-                    onClick={() => clickable && go(n)}
-                    aria-current={active ? 'step' : undefined}
-                    className={`relative flex h-11 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition-colors sm:px-4 [@media(max-height:740px)]:h-9 [@media(max-height:740px)]:px-2.5 ${
-                      active
-                        ? 'border-primary text-primary-foreground'
-                        : complete
-                          ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
-                          : 'text-muted-foreground'
-                    } ${clickable ? 'cursor-pointer' : ''}`}
-                  >
-                    {active && (
-                      <motion.span
-                        layoutId="billing-active-step"
-                        className="absolute inset-0 rounded-full bg-primary shadow-sm"
-                        transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-                        initial={false}
+                const n = (i + 1) as 1 | 2 | 3
+                const active = effStep === n
+                const complete = effStep > n
+                const clickable = complete && !submitting
+                return (
+                  <div key={label} className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
+                    {i > 0 && (
+                      <span
+                        className={`h-px w-4 sm:w-7 ${complete ? 'bg-primary/50' : 'bg-border'}`}
+                        aria-hidden="true"
                       />
                     )}
-                    <span
-                      className={`relative z-10 flex size-6 items-center justify-center rounded-full text-xs font-bold ${
-                        active
-                          ? 'bg-primary-foreground/20'
-                          : complete
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted'
+                    <button
+                      type="button"
+                      disabled={!clickable}
+                      onClick={() => clickable && go(n)}
+                      aria-current={active ? 'step' : undefined}
+                      className={`flex items-center gap-2 rounded-lg py-1 pr-1 transition-opacity ${
+                        clickable ? 'cursor-pointer hover:opacity-75' : 'cursor-default'
                       }`}
                     >
-                      {complete ? <Check className="size-4" /> : n}
-                    </span>
-                    <span className="relative z-10 hidden sm:inline">{label}</span>
-                  </button>
-                </div>
-              )
-            })}
+                      <span
+                        className={`flex size-6 shrink-0 items-center justify-center rounded-lg text-xs font-bold transition-colors ${
+                          active
+                            ? 'bg-foreground text-background shadow-sm'
+                            : complete
+                              ? 'bg-primary/15 text-primary'
+                              : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {complete ? <Check className="size-3.5" /> : n}
+                      </span>
+                      <span
+                        className={`hidden truncate text-sm sm:inline ${
+                          active
+                            ? 'font-bold'
+                            : complete
+                              ? 'font-semibold text-foreground/75'
+                              : 'font-medium text-muted-foreground'
+                        }`}
+                      >
+                        {label}
+                      </span>
+                    </button>
+                  </div>
+                )
+              })}
             </nav>
             <LangToggle />
           </div>
         )}
 
-        {/* Steps */}
-        <div className="mt-4 lg:mt-6 [@media(max-height:740px)]:mt-2">
+        {/* Two-pane POS workspace: step content + live ticket (desktop).
+            No items-start — the aside must STRETCH to the tall catalog column,
+            otherwise its sticky child has no room to stick and scrolls away. */}
+        <div
+          className={`mt-3 lg:mt-5 [@media(max-height:740px)]:mt-2 ${
+            effStep < 4 ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-6' : ''
+          }`}
+        >
+          <div className="min-w-0">
           <AnimatePresence mode="wait" custom={dir} initial={false}>
             {effStep === 1 && (
               <motion.div
@@ -557,7 +640,6 @@ export default function BillingFlow() {
                   }
                   savedMenu={usingSavedMenu}
                   onRetry={() => void catalogQuery.refetch()}
-                  onContinue={() => go(2)}
                 />
               </motion.div>
             )}
@@ -676,8 +758,156 @@ export default function BillingFlow() {
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
+
+          {/* Live ticket — stays in view across services → customer → payment */}
+          {effStep < 4 && (
+            <aside className="hidden lg:block" aria-label={L.currentBill}>
+              <div className="sticky top-20">
+                <TicketPanel
+                  step={effStep === 3 ? 3 : effStep === 2 ? 2 : 1}
+                  subtotal={subtotal}
+                  discountAmount={discountAmount}
+                  discountLabel={ticketDiscountLabel}
+                  gstPct={gstPct}
+                  gstAmount={gstAmount}
+                  tip={tip}
+                  customer={ticketCustomer}
+                  continueDisabled={ticketContinueDisabled}
+                  submitting={submitting}
+                  onContinue={
+                    effStep === 1
+                      ? () => go(2)
+                      : () =>
+                          handleCustomerContinue({
+                            mobile: keypad.digits,
+                            name: name.trim(),
+                            customer,
+                            walkIn,
+                          })
+                  }
+                />
+              </div>
+            </aside>
+          )}
         </div>
       </div>
+
+      {/* ── Mobile: fixed cart bar ──────────────────────────────────────────
+          Viewport-PINNED (fixed — never sticky) the moment the bill has items,
+          and it stays pinned across ALL steps (services → customer → payment)
+          so the cashier always sees the running total and can open the ticket
+          without scrolling, whatever the step or scroll position. Rendered
+          OUTSIDE the animated step wrappers so no transform can re-anchor it;
+          the left half opens the ticket sheet. The CTA advances on steps 1–2
+          (gated on step 2 until the customer is resolved); on step 3 the
+          payment methods own the action, so the bar is summary-only. */}
+      <AnimatePresence>
+        {cartBarVisible && (
+          <motion.div
+            initial={{ y: 96, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 96, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+            className={`fixed inset-x-0 z-40 px-4 lg:hidden ${
+              hasMobileNav
+                ? 'bottom-[calc(4.75rem+env(safe-area-inset-bottom))]'
+                : 'bottom-[calc(1rem+env(safe-area-inset-bottom))]'
+            }`}
+          >
+            <div className="pointer-events-none mx-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border bg-card p-2.5 pl-2 lift">
+              <button
+                type="button"
+                onClick={() => setCartDrawerOpen(true)}
+                aria-label={L.yourBill}
+                className="pointer-events-auto flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+              >
+                <span className="tnum flex size-10 shrink-0 items-center justify-center rounded-xl bg-foreground text-sm font-bold text-background">
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={totalQty}
+                      initial={{ opacity: 0, scale: 0.6, y: -6 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.6, y: 6 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="tnum"
+                    >
+                      {totalQty}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
+                <span className="min-w-0 flex-1 leading-tight">
+                  {/* The money is the hero line — it can never truncate. Shows
+                      the FULL live bill (discount + GST + tip applied). */}
+                  <span className="tnum block text-base font-bold tracking-tight">
+                    {formatINR(expectedTotal)}
+                  </span>
+                  <span className="mt-0.5 flex items-center gap-0.5 text-xs font-medium text-muted-foreground">
+                    <span className="tnum">{totalQty}</span>{' '}
+                    {totalQty === 1 ? L.item : L.items}
+                    <ChevronUp className="size-3.5 shrink-0" aria-hidden />
+                  </span>
+                </span>
+              </button>
+              {effStep < 3 && (
+                <Button
+                  size="lg"
+                  className="pointer-events-auto h-12 shrink-0 px-5 text-base font-bold sm:px-6"
+                  disabled={effStep === 2 && ticketContinueDisabled}
+                  onClick={() =>
+                    effStep === 1
+                      ? go(2)
+                      : handleCustomerContinue({
+                          mobile: keypad.digits,
+                          name: name.trim(),
+                          customer,
+                          walkIn,
+                        })
+                  }
+                >
+                  {effStep === 1 ? L.continue : L.continueToPayment}
+                  <ArrowRight className="size-4.5" />
+                </Button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile: the full ticket in a bottom sheet — opened from the cart bar.
+          Receives the COMPLETE money state (discount + GST + tip) so its total
+          always equals the payment screen's, plus a step-aware CTA. */}
+      <Drawer open={cartDrawerOpen} onOpenChange={setCartDrawerOpen}>
+        <DrawerContent>
+          <DrawerTitle className="sr-only">{L.yourBill}</DrawerTitle>
+          <div className="p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+            <TicketPanel
+              step={effStep === 3 ? 3 : effStep === 2 ? 2 : 1}
+              subtotal={subtotal}
+              discountAmount={discountAmount}
+              discountLabel={ticketDiscountLabel}
+              gstPct={gstPct}
+              gstAmount={gstAmount}
+              tip={tip}
+              customer={ticketCustomer}
+              continueDisabled={ticketContinueDisabled}
+              submitting={submitting}
+              fillViewport={false}
+              onContinue={() => {
+                setCartDrawerOpen(false)
+                if (effStep === 1) go(2)
+                else
+                  handleCustomerContinue({
+                    mobile: keypad.digits,
+                    name: name.trim(),
+                    customer,
+                    walkIn,
+                  })
+              }}
+            />
+          </div>
+        </DrawerContent>
+      </Drawer>
 
       {/* Saving overlay */}
       <AnimatePresence>

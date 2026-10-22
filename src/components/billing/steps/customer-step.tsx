@@ -178,8 +178,8 @@ export function CustomerStep({
 
   return (
     <div className="mx-auto max-w-md">
-      {/* Cart chip */}
-      <div className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm font-semibold [@media(max-height:740px)]:py-1">
+      {/* Cart chip (mobile — the desktop ticket panel shows the live bill) */}
+      <div className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm font-semibold lg:hidden [@media(max-height:740px)]:py-1">
         <Check className="size-4 text-emerald-600" />
         {totalQty} {totalQty === 1 ? L.item : L.items} · {formatINR(subtotal)}
       </div>
@@ -497,31 +497,11 @@ export function CustomerStep({
         </button>
       )}
 
-      {/* Sticky bottom bar */}
-      <div
-        className={
-          hasMobileNav
-            ? 'sticky bottom-[calc(4.75rem_+_env(safe-area-inset-bottom))] z-20 mt-6 flex items-center gap-3 bg-background/80 p-1 backdrop-blur-sm lg:bottom-4 [@media(max-height:740px)]:mt-3'
-            : 'sticky bottom-4 z-20 mt-6 flex items-center gap-3 bg-background/80 p-1 backdrop-blur-sm [@media(max-height:740px)]:mt-3'
-        }
-      >
-        <Button
-          variant="ghost"
-          className="h-14 shrink-0 px-4 text-muted-foreground [@media(max-height:740px)]:h-12"
-          onClick={onBack}
-        >
-          <ChevronLeft className="size-5" />
-          {L.backToServices}
-        </Button>
-        <Button
-          size="lg"
-          className="h-14 flex-1 text-base font-bold [@media(max-height:740px)]:h-12"
-          disabled={!canContinue}
-          onClick={() => onContinue({ mobile: keypad.digits, name: name.trim(), customer, walkIn })}
-        >
-          {L.continueToPayment}
-        </Button>
-      </div>
+      {/* No mobile bottom bar here anymore: the viewport-pinned cart bar
+          (billing-flow root) is always present while the bill has items and
+          carries the same "Continue to Payment" CTA with the same gating
+          (walk-in or resolved lookup). Back = the step stepper at the top;
+          the desktop ticket aside owns the CTA on lg. */}
     </div>
   )
 }

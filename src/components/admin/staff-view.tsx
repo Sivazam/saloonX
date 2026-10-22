@@ -313,7 +313,12 @@ export default function StaffView() {
                 <span className="flex size-11 shrink-0 items-center justify-center rounded-full border bg-secondary text-sm font-bold text-secondary-foreground">
                   {initials(u.name)}
                 </span>
-                <div className="min-w-0 flex-1">
+                {/* grow + basis-36 (NOT flex-1 — its `flex: 1 1 0%` shorthand
+                    overrides basis and re-crushes the column): at phone widths
+                    the money + 3 action buttons (≈210px) used to squeeze this
+                    column to ~40px. With a real basis the action group wraps
+                    below instead. */}
+                <div className="min-w-0 grow basis-36 sm:basis-44">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-semibold">{u.name}</p>
                     <RoleBadge role={u.role} />
@@ -347,7 +352,7 @@ export default function StaffView() {
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <div className="text-right">
                     <p className="tnum text-sm font-bold">{formatINR(u.revenueToday)}</p>
                     <p className="tnum text-[11px] text-muted-foreground">{u.billsToday} today</p>

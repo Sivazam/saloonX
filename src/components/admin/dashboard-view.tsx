@@ -188,18 +188,31 @@ function KpiCard({
       }}
       className="hairline rounded-xl bg-card p-4 lg:p-5"
     >
+      {/* Header is icon + label ONLY — the delta chip used to live here and
+          clipped hard at phone card widths (header needed up to 195px inside a
+          139px content box). Label now truncates instead. */}
       <div className="flex items-center gap-3">
         <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg', chipClass)}>
           <Icon className="size-5" aria-hidden />
         </span>
-        <p className="micro text-muted-foreground">{label}</p>
+        <p className="micro min-w-0 flex-1 truncate text-muted-foreground">{label}</p>
+      </div>
+      {/* Value + delta share a wrapping row: side by side when they fit,
+          chip drops below the value on narrow cards — it can never clip.
+          text-base on phones: 6-figure franchise money (₹1,01,078.56 needs
+          146px at 20px) must render COMPLETE inside the 126-139px content
+          box; sm+ restores the big display sizes. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <p className="tnum min-w-0 text-base font-bold tracking-tight sm:text-2xl lg:text-[1.65rem]">
+          <CountUp value={value} format={format} />
+        </p>
         {hasDelta && !isFlat && (
           <motion.span
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.3 + index * 0.08, duration: 0.25 }}
             className={cn(
-              'ml-auto inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tnum',
+              'inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tnum',
               isGood
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
@@ -210,9 +223,6 @@ function KpiCard({
           </motion.span>
         )}
       </div>
-      <p className="tnum mt-3 text-xl font-bold tracking-tight sm:text-2xl lg:text-[1.65rem]">
-        <CountUp value={value} format={format} />
-      </p>
       <p className="mt-1 text-xs text-muted-foreground">{sub}</p>
       <span className="sr-only">KPI {index + 1}</span>
     </motion.div>
@@ -295,7 +305,7 @@ function PaymentSplitCard({
                     className={cn('h-full rounded-full', meta.barClass)}
                   />
                 </div>
-                <span className="tnum w-[4.5rem] shrink-0 text-right text-[11px] text-muted-foreground">
+                <span className="tnum w-auto shrink-0 whitespace-nowrap text-right text-[11px] text-muted-foreground">
                   {L.admPsRow.replace('{count}', String(count)).replace('{pct}', String(pct))}
                 </span>
               </div>
@@ -560,7 +570,7 @@ function TopServicesCard({ top }: { top: StatsResponse['topServices'] }) {
                   <p className="truncate text-sm font-medium">{s.name}</p>
                   <p className="tnum text-xs text-muted-foreground">{L.admTsSold.replace('{n}', String(s.count))}</p>
                 </div>
-                <p className="tnum text-sm font-bold">{formatINR(s.revenue)}</p>
+                <p className="tnum shrink-0 text-base font-bold sm:text-lg">{formatINR(s.revenue)}</p>
               </div>
               <div className="mt-1.5 ml-[34px] h-1.5 overflow-hidden rounded-full bg-muted">
                 <motion.div
@@ -585,10 +595,10 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
   const anyCommission = top.some((s) => s.commissionPct > 0)
   return (
     <div className="hairline rounded-xl bg-card p-4 lg:p-5">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold leading-tight">{L.admSecStaffPerf}</h2>
         {anyCommission && (
-          <Badge className="tnum gap-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
+          <Badge className="tnum shrink-0 gap-1 whitespace-nowrap bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-950">
             <BadgePercent className="size-3" aria-hidden />
             {L.admSpCommission} {formatINR(totalCommission)}
           </Badge>
@@ -623,9 +633,9 @@ function StaffPerformanceCard({ top }: { top: StatsResponse['topStaff'] }) {
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="tnum text-sm font-bold">{formatINR(s.revenue)}</p>
+                <p className="tnum whitespace-nowrap text-sm font-bold">{formatINR(s.revenue)}</p>
                 {s.commission > 0 && (
-                  <p className="tnum text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  <p className="tnum whitespace-nowrap text-xs font-medium text-emerald-600 dark:text-emerald-400">
                     +{formatINR(s.commission)}
                   </p>
                 )}
@@ -857,7 +867,7 @@ function RecentBillsCard({
               </div>
               <p
                 className={cn(
-                  'tnum w-20 shrink-0 text-right text-sm font-bold',
+                  'tnum shrink-0 whitespace-nowrap text-right text-sm font-bold',
                   t.status === 'VOIDED' && 'text-muted-foreground line-through',
                 )}
               >
@@ -903,21 +913,24 @@ function ProfitStrip({
           {L.admPlManage}
         </Button>
       </div>
-      <div className="mt-4 grid grid-cols-3 items-center gap-2 sm:gap-4">
-        <div>
+      {/* Mobile: a stacked mini-ledger (label left, COMPLETE value right) —
+          3 equal columns squeezed 16px money into ~103px and wrapped it
+          mid-number (−₹21,772.78 broke after the comma). sm+: 3 columns. */}
+      <div className="mt-4 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-3 sm:items-center sm:gap-4">
+        <div className="flex items-baseline justify-between gap-3 sm:block">
           <p className="micro text-muted-foreground">{L.admKpiRevenue}</p>
-          <p className="tnum mt-0.5 text-base font-bold sm:text-xl">{formatINR(revenue)}</p>
+          <p className="tnum text-base font-bold sm:mt-0.5 sm:text-xl">{formatINR(revenue)}</p>
         </div>
-        <div className="text-center">
+        <div className="flex items-baseline justify-between gap-3 sm:block sm:text-center">
           <p className="micro text-muted-foreground">{L.admNavExpenses}</p>
-          <p className="tnum mt-0.5 text-base font-bold text-rose-600 sm:text-xl dark:text-rose-400">
+          <p className="tnum text-base font-bold text-rose-600 sm:mt-0.5 sm:text-xl dark:text-rose-400">
             −{formatINR(expenses.total)}
           </p>
         </div>
-        <div className="text-right">
+        <div className="flex items-baseline justify-between gap-3 sm:block sm:text-right">
           <p className="micro text-muted-foreground">{L.admPlNetProfit}</p>
           <p
-            className={`tnum mt-0.5 text-base font-bold sm:text-xl ${
+            className={`tnum text-base font-bold sm:mt-0.5 sm:text-xl ${
               profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'
             }`}
           >
@@ -1037,13 +1050,13 @@ function CustomerInsightsCard({
         {/* Stats + top spenders */}
         <div className="flex flex-col gap-2.5">
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-sm bg-muted/50 p-2">
+            <div className="min-w-0 rounded-sm bg-muted/50 p-2">
               <p className="micro text-[10px] text-muted-foreground">Unique</p>
-              <p className="tnum text-lg font-bold">{depth.unique}</p>
+              <p className="tnum text-base font-bold sm:text-lg">{depth.unique}</p>
             </div>
-            <div className="rounded-sm bg-muted/50 p-2">
+            <div className="min-w-0 rounded-sm bg-muted/50 p-2">
               <p className="micro text-[10px] text-muted-foreground">ARPU</p>
-              <p className="tnum text-lg font-bold">{formatINR(depth.avgRevenuePerCustomer)}</p>
+              <p className="tnum text-base font-bold sm:text-lg">{formatINR(depth.avgRevenuePerCustomer)}</p>
             </div>
           </div>
           {topCustomers.length > 0 ? (
@@ -1093,13 +1106,13 @@ function DiscountInsightsCard({ discounts }: { discounts: StatsResponse['discoun
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <div className="rounded-sm bg-muted/50 p-2.5">
+        <div className="min-w-0 rounded-sm bg-muted/50 p-2.5">
           <p className="micro text-[10px] text-muted-foreground">{L.admDiscGiven}</p>
-          <p className="tnum mt-0.5 text-lg font-bold">{formatINR(discounts.totalAmount)}</p>
+          <p className="tnum mt-0.5 text-base font-bold sm:text-lg">{formatINR(discounts.totalAmount)}</p>
         </div>
-        <div className="rounded-sm bg-muted/50 p-2.5">
+        <div className="min-w-0 rounded-sm bg-muted/50 p-2.5">
           <p className="micro text-[10px] text-muted-foreground">{L.admDiscBills}</p>
-          <p className="tnum mt-0.5 text-lg font-bold">{discounts.billsWithDiscount}</p>
+          <p className="tnum mt-0.5 text-base font-bold sm:text-lg">{discounts.billsWithDiscount}</p>
           <p className="text-[10px] text-muted-foreground tnum">{L.admDiscPct.replace('{n}', String(discounts.avgPct))}</p>
         </div>
         <div className="col-span-2 rounded-sm bg-muted/50 p-2.5">
