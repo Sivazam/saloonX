@@ -136,6 +136,13 @@ if [ -f "$PROJECT_DIR/.zscripts/ensure-zip.sh" ]; then
         bash "$PROJECT_DIR/.zscripts/ensure-zip.sh" || true
 fi
 
+# Re-seed the demo dataset if a sandbox reset emptied the gitignored SQLite
+# database (otherwise every login 403s — Firebase knows the users, the local
+# rows to bind sessions to are gone). Only seeds when tenants = 0.
+if [ -f "$PROJECT_DIR/.zscripts/ensure-db.sh" ]; then
+        bash "$PROJECT_DIR/.zscripts/ensure-db.sh" || true
+fi
+
 log_step_start "Starting Next.js dev server"
 echo "[BUN] Starting development server..."
 bun run dev &

@@ -1531,3 +1531,42 @@ Stage Summary:
 - Dev server running on :3000 via PPid-1 daemonization — stable across tool calls; app E2E-verified working (login, branch switch, billing).
 - Commits: a49b780 (track missing module + env template), 58f734a (download label). zipper.zip itself is gitignored by design.
 - Push to github.com/Sivazam/saloonX still requires the user to supply a PAT — OR simply download zipper.zip from the login page: it contains .git with all commits; unzip and `git push -u origin master` from any machine with credentials.
+
+---
+Task ID: ZIP-SELFHEAL
+Agent: Z.ai Code (main session)
+Task: User reported the zip vanished from public/ and the login-page download button 404'd ("file wasn't available on this site").
+
+Work Log:
+- Root cause: the sandbox VM rebooted overnight (uptime 34min at investigation; server had been respawned by the sandbox supervisor at 06:43). zipper.zip is intentionally gitignored, so the post-reboot working-tree restore wiped it. Git history, tracked files, and the DB all survived; .env had been slimmed by the boot script to DATABASE_URL only.
+- Restored .env demo flag (NEXT_PUBLIC_SHOW_DEMO_HINTS=true) so the login demo-accounts card matches the pre-reboot experience.
+- git config core.fileMode false — the boot restore chmod'ed tracked files 755, causing phantom "modified" noise (0 insertions/deletions across 23 files).
+- Built the self-healing fix (commit a1e3edf):
+  - .zscripts/ensure-zip.sh — regenerates public/zipper.zip from the exact git tracked tree + full .git history whenever missing; no-op when present; guards every tool (git/zip/rsync) and always exit 0 so it can never block a server boot.
+  - package.json "predev" hook — verified bun 1.3.14 executes lifecycle scripts; the sandbox supervisor boots the app via `bun run dev`, so the zip now rebuilds automatically on every VM reset.
+  - .zscripts/dev.sh also invokes ensure-zip.sh before starting Next (belt+braces for script-driven boots).
+- Exercised the full chain live: killed the supervisor's server tree, ran `bun run dev` (double-fork daemonized, PPid=1) → predev fired → "[ensure-zip] done — 15M" → Next.js Ready in 777ms.
+- Verification: curl /zipper.zip HTTP 200 · 15,216,390 bytes · integrity OK; inner .git master = a1e3edf (latest commit, so the zip even ships the self-healing infra itself); 710 files in archive. Browser: login page link renders ("Download full source (zipper.zip · 15 MB)"), in-page fetch HEAD → 200 application/zip, and a real .click() produced ~/Downloads/zipper.zip with byte-exact size and clean unzip -t. dev.log all 200s (401s = expected pre-login probes). No console errors.
+
+Stage Summary:
+- public/zipper.zip is back (15MB, full source + git history, secrets excluded).
+- The download is now durable: any future sandbox reset self-rebuilds the zip at server boot via the predev hook — the login button can no longer 404 after a reset.
+- Commits this round: a1e3edf (self-healing infra). Worklog commit follows.
+- GitHub push remains credential-blocked from the sandbox; the zip's embedded .git contains every commit for push-from-elsewhere.
+
+---
+Task ID: PROD-AUDIT-2
+Agent: Z.ai Code (main session)
+Task: User asked: (a) are we production ready? (b) is Firebase Storage/Firestore correctly setup and wired, with Indian servers selected? (c) is the customers page working?
+
+Work Log:
+- FIREBASE AUDIT: app uses Firebase AUTH ONLY (firebase/app + firebase/auth client; Identity Toolkit REST server-side, no Admin SDK). Firestore, Storage, RTDB are NOT used by the app — data lives in SQLite via Prisma. Live probes: Auth healthy (identitytoolkit responds correctly); Firestore default DB not provisioned (404 on docs probe); Storage bucket exists but EMPTY and unused; RTDB absent. Region story: Firebase Auth is a global service (no region setting); the region-bearing services (Firestore asia-south1 Mumbai / Storage asia-south1) aren't part of the architecture — if ever enabled, create them in asia-south1 at provision time (console check needed; bucket metadata requires OAuth). What actually controls India latency: deploy the Next.js server + SQLite volume in an Indian region (or move to Postgres on an India-hosted DB when scaling).
+- Post-reboot incident #2 found & fixed: the VM reset ALSO wiped gitignored db/custom.db → every login 403'd (Firebase Auth still knew the users; no local rows to bind sessions). Ran db:seed (idempotent, Firebase accounts reused by UID via ensureFirebaseUser EMAIL_EXISTS path). Then built self-healing: .zscripts/ensure-db.sh (schema push + seed ONLY when tenants=0 — never clobbers real data), wired into predev + dev.sh. Verified both paths live: no-op when healthy; simulated wipe healed fully.
+- Diagnosed SQLITE_READONLY_DBMOVED (1032) after deleting the live DB under the running server — restart binds the fresh file; in real resets the predev heal runs BEFORE boot so this can never occur.
+- CUSTOMERS PAGE E2E (as ravi@glowgo.example, Andheri West): list renders (14 customers, loyalty badges, tabular numerals); search "sneha" 14→1 then clear→14; detail drawer (bills/spend/avg stats, cross-branch GG1/GG2/GG3 visit history, served-by, notes); Edit round-trip (birthday 18-10→25-12 saved + shown, reverted); lapsed API (0 lapsed with fresh data — correct); birthdaysWithin=30 (Vikram Singh in 13d); MERGE E2E: created bill GG1-0046 for new customer "Merge Test" (9990001111) via full billing flow, then merged Mohammed Ali into it (dialog direction: searched customer merges INTO the open profile — button reads "Merge & retire <name>"): visits summed 12+1=13, tombstone row with PII-cleared mobile `<merged:…>`, and all 13 cross-branch transactions re-parented with keeper name/mobile snapshots rewritten — verified in DB. Restored pristine demo data via full reset-chain dress rehearsal (kill server → rm db → boot: predev healed schema+seed, login+customers verified fresh). VLM screenshot check: columns, alignment, badges all clean. Zero console errors; dev.log all 200s.
+
+Stage Summary:
+- Customers page: WORKING end-to-end (list/search/detail/edit/filters/merge — merge incl. ledger re-parenting is transaction-safe).
+- Firebase: Auth correctly wired & verified live; Firestore/Storage intentionally unused (nothing to wire); region guidance documented (Auth=global; use asia-south1 if ever enabling FS/Storage; host the app+DB in India for latency).
+- Sandbox resilience: both gitignored artifacts (zip + DB) now self-heal at every boot via predev.
+- Production verdict delivered to user with honest deferred list: Devanagari in PDFs, SUPER_ADMIN oversight policy, FCM push, appointments (roadmap), GitHub push (needs PAT), + production ops notes (HTTPS, backups, Postgres migration path, Admin SDK upgrade path).
